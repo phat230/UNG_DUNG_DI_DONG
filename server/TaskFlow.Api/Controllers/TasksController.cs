@@ -20,7 +20,7 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
     async Task<bool> CanView(TaskItem task) => await CanManage(task) || (task.WorkspaceId.HasValue && task.OwnerId == UserId && await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId));
 
     [HttpGet]
-    public async Task<IActionResult> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? q = null, [FromQuery] WorkStatus? status = null, [FromQuery] int? categoryId = null, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] string? ownerId = null, [FromQuery] int? workspaceId = null, [FromQuery] bool personalOnly = false)
+    public async Task<IActionResult> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? q = null, [FromQuery] WorkStatus? status = null, [FromQuery] int? categoryId = null, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] string? ownerId = null, [FromQuery] int? workspaceId = null, [FromQuery] bool personalOnly = false, [FromQuery] string? sort = null)
     {
         page = Math.Max(1, page); pageSize = Math.Clamp(pageSize, 1, 100);
         var query = db.Tasks.AsNoTracking().AsQueryable();
@@ -44,7 +44,9 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
         if (from.HasValue) query = query.Where(t => t.DueAt >= from);
         if (to.HasValue) query = query.Where(t => t.DueAt < to.Value.AddDays(1));
         var total = await query.CountAsync();
-        var items = await query.OrderBy(t => t.Status).ThenBy(t => t.DueAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
+        var items = string.Equals(sort, "newest", StringComparison.OrdinalIgnoreCase)
+            ? await query.OrderByDescending(t => t.CreatedAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync()
+            : await query.OrderBy(t => t.Status).ThenBy(t => t.DueAt).Skip((page - 1) * pageSize).Take(pageSize).ToListAsync();
         return Ok(new { items, total, page, pageSize });
     }
 
@@ -207,6 +209,7 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
         if (!allowed && task.WorkspaceId.HasValue)
             allowed = await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId && m.Role == "Leader" && m.LeftAt == null);
         if (!allowed) return Forbid();
+        if (await db.TaskPlanItems.AnyAsync(i => i.TaskId == id)) return Conflict(new { message = "Công việc đang nằm trong kế hoạch. Hãy gỡ khỏi kế hoạch trước khi xóa." });
         var files = await db.TaskAttachments.Where(a => a.TaskId == id).Select(a => a.StorageName).ToListAsync();
         foreach (var file in files) DeleteAttachmentFile(id, file);
         db.Tasks.Remove(task);

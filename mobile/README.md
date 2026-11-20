@@ -1,24 +1,28 @@
 # TaskFlow mobile
 
-## Đăng nhập và liên kết Google
+## Google sign-in
 
-Ứng dụng hỗ trợ đăng nhập Google và liên kết Google với tài khoản TaskFlow hiện có. Google ID token được API xác minh trước khi tạo phiên hoặc liên kết tài khoản.
+- The Flutter app passes the Web OAuth Client ID as `serverClientId`; it is a public identifier, not a secret.
+- Register an OAuth client of type **Android** using package `vn.edu.taskflow.taskflow_mobile` and the SHA-1 of the certificate that signed that build.
+- Also register a **Web application** OAuth client. Its Client ID is the `serverClientId` and the expected ID-token audience configured by the API.
+- Set API audience with `Google__ClientIds=<WEB_CLIENT_ID>` (plus other Web client IDs only when they are actually token audiences). The Android client is registered by package/SHA-1; do not use its ID as a substitute for the Web client ID.
+- Debug and release builds signed with different certificates need their corresponding Android OAuth registrations. With Google Play App Signing, include the Play app-signing SHA-1 from Play Console.
+- The debug Web Client ID in this repository is public. Never commit a client secret or credential JSON file.
 
-Cần cấu hình OAuth trước khi nút Google hoạt động:
+For an APK using a different Web client, build with:
 
-1. Trong Google Cloud Console tạo OAuth client loại **Android** với package `vn.edu.taskflow.taskflow_mobile` và SHA-1 debug `94:F6:9E:BA:EB:D3:3A:FB:BF:64:BE:3B:E2:CC:02:9D:55:D9:C4:DE`.
-2. Tạo thêm OAuth client loại **Web application**. Dùng client ID Web làm `GOOGLE_SERVER_CLIENT_ID` cho Flutter.
-3. Chạy API với biến môi trường `Google__ClientIds` chứa client ID Web và Android, phân tách bằng dấu phẩy. Ví dụ PowerShell:
+```powershell
+flutter build apk --release `
+  --dart-define=GOOGLE_SERVER_CLIENT_ID=<WEB_CLIENT_ID> `
+  --dart-define=TASKFLOW_API_URL=https://<api-domain>/api
+```
 
-   ```powershell
-   $env:Google__ClientIds = "WEB_CLIENT_ID,ANDROID_CLIENT_ID"
-   dotnet run --project server/TaskFlow.Api/TaskFlow.Api.csproj
-   ```
+## API access
 
-4. Build app truyền Web client ID:
+On a physical Android phone connected by USB to the development PC, run the API and:
 
-   ```powershell
-   flutter build apk --debug --dart-define=GOOGLE_SERVER_CLIENT_ID=WEB_CLIENT_ID --dart-define=TASKFLOW_API_URL=http://127.0.0.1:5000/api
-   ```
+```powershell
+adb reverse tcp:5000 tcp:5000
+```
 
-Thiết bị Android cần kết nối cùng API hoặc dùng `adb reverse tcp:5000 tcp:5000` khi API chạy trên máy phát triển. SHA-1 phía trên là debug keystore trên máy hiện tại; bản release cần đăng ký SHA-1 của release keystore riêng.
+The current `127.0.0.1` URL is for local development only. Users installing a release need a public API URL over HTTPS.

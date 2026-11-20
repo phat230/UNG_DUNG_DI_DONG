@@ -16,6 +16,8 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
     public DbSet<WorkspaceMember> WorkspaceMembers => Set<WorkspaceMember>();
     public DbSet<TaskNotice> TaskNotices => Set<TaskNotice>();
     public DbSet<TaskAttachment> TaskAttachments => Set<TaskAttachment>();
+    public DbSet<TaskPlan> TaskPlans => Set<TaskPlan>();
+    public DbSet<TaskPlanItem> TaskPlanItems => Set<TaskPlanItem>();
     protected override void OnModelCreating(ModelBuilder b)
     {
         base.OnModelCreating(b);
@@ -25,6 +27,10 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
         b.Entity<TaskComment>().HasOne<TaskItem>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<TaskReminder>().HasOne<TaskItem>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Cascade);
         b.Entity<TaskAttachment>().HasOne<TaskItem>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<TaskPlan>().HasIndex(x => new { x.OwnerId, x.CreatedAt });
+        b.Entity<TaskPlanItem>().HasIndex(x => new { x.PlanId, x.TaskId }).IsUnique();
+        b.Entity<TaskPlanItem>().HasOne<TaskPlan>().WithMany().HasForeignKey(x => x.PlanId).OnDelete(DeleteBehavior.Cascade);
+        b.Entity<TaskPlanItem>().HasOne<TaskItem>().WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
         b.Entity<Workspace>().HasIndex(x => x.JoinCode).IsUnique();
         b.Entity<WorkspaceMember>().HasIndex(x => new { x.WorkspaceId, x.UserId }).IsUnique();
         b.Entity<AppUser>().HasIndex(x => x.GoogleSubject).IsUnique().HasFilter("[GoogleSubject] IS NOT NULL");

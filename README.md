@@ -9,21 +9,21 @@
 | Đăng ký, đăng nhập, đổi mật khẩu, member, role, logout, phân quyền | Tài khoản thành viên, quản trị viên; xác thực, quản lý tài khoản và vai trò |
 | Danh mục, kiểm tra trước khi xóa | Danh mục công việc; chặn xóa khi đang được công việc sử dụng |
 | Sản phẩm, ảnh, phân trang, tìm kiếm, chi tiết | Công việc, tệp đính kèm, phân trang, lọc/tìm kiếm và chi tiết |
-| Trang chủ, sản phẩm mới, theo danh mục, liên quan | Tổng quan hôm nay, việc mới, danh mục, việc liên quan/cùng dự án |
-| Giỏ hàng, cập nhật số lượng, checkout, đơn hàng | Danh sách việc chọn, checklist, tạo kế hoạch/đợt công việc và xem chi tiết |
+| Trang chủ, sản phẩm mới, theo danh mục, liên quan | Tổng quan task mới, lọc theo danh mục, tìm kiếm và chi tiết task |
+| Giỏ hàng, cập nhật số lượng, checkout, đơn hàng | Kế hoạch công việc: chọn nhiều task, xếp giờ, thêm/gỡ task và xác nhận kế hoạch |
 | Quản lý đơn hàng, trạng thái, lọc ngày | Quản lý việc của nhóm, cập nhật trạng thái và lọc theo hạn |
-| Thanh toán | Không phù hợp ứng dụng công việc; thay bằng nhắc hạn, lặp lại và thống kê tiến độ |
+| Thanh toán | Không phát sinh nghiệp vụ thanh toán; thay bằng xác nhận kế hoạch và theo dõi tiến độ |
 
 Chức năng đã tích hợp gồm nhắc việc lặp, đăng nhập/liên kết Google, quên mật khẩu, upload tệp đính kèm, quản lý nhóm và phân quyền. Quên mật khẩu gửi token qua SMTP; trong Development khi chưa cấu hình SMTP, API trả token kiểm thử trong phản hồi.
 
-Bảng đối chiếu chi tiết yêu cầu với chức năng đã làm/đang để mở nằm ở [docs/requirement-mapping.md](docs/requirement-mapping.md).
+Bảng đối chiếu và các giới hạn/cấu hình cần cho phát hành nằm ở [docs/requirement-mapping.md](docs/requirement-mapping.md). Sơ đồ ERD, use case, quyền và API nằm ở [docs/architecture-and-demo.md](docs/architecture-and-demo.md).
 
 ## Cấu trúc
 
 - `mobile/`: Flutter app, đăng nhập/đăng ký API, SQLite `tasks` và `sync_queue`.
-- `server/TaskFlow.Api/`: ASP.NET Core API, Identity/role, SQL Server context, CRUD công việc, danh mục, member và lời nhắc.
+- `server/TaskFlow.Api/`: ASP.NET Core API, Identity/role, SQL Server, CRUD công việc/danh mục/member, tệp đính kèm và kế hoạch.
 - `TaskFlow.sln`: solution .NET.
-- `docs/`: dành cho sơ đồ use case, ERD, API và báo cáo phân công.
+- `docs/`: đối chiếu rubric, kiến trúc, ERD, use case, API và kịch bản demo.
 
 ## Chạy ứng dụng Flutter
 
@@ -48,7 +48,7 @@ dotnet user-secrets set "Jwt:Key" "<random-secret-at-least-32-bytes>" --project 
 dotnet run --project server/TaskFlow.Api --urls http://0.0.0.0:5000
 ```
 
-Dự án đã có User Secrets ID. Đặt thông tin SMTP bằng `dotnet user-secrets set "Smtp:Host" ...`, `Smtp:Port`, `Smtp:Username`, `Smtp:Password` và `Smtp:From` để gửi token quên mật khẩu. Không commit các giá trị bí mật này.
+Dự án đã có User Secrets ID. Để gửi email quên mật khẩu qua Gmail SMTP, đặt `Smtp:Host=smtp.gmail.com`, `Smtp:Port=587`, `Smtp:EnableSsl=true`, `Smtp:Username=<email>`, `Smtp:From=<email>`, và `Smtp:Password=<Google App Password>` bằng `dotnet user-secrets set`. Không dùng Google OAuth client secret làm SMTP password; không commit secrets.
 
 Điện thoại Android thật dùng `adb reverse tcp:5000 tcp:5000`; app gọi `http://127.0.0.1:5000/api`. Emulator có thể ghi đè bằng `flutter run --dart-define=TASKFLOW_API_URL=http://10.0.2.2:5000/api`.
 
@@ -65,6 +65,3 @@ SQLite tạo file `taskflow.db` trên thiết bị lần đầu khởi chạy v�
 3. Cùng thống nhất DTO, phân quyền, use cases, tích hợp và viết báo cáo/demo.
 
 > Trên máy Windows có đường dẫn dự án chứa dấu tiếng Việt, dùng junction `C:\tfmobile` để chạy Flutter do giới hạn xử lý Unicode của Flutter/Gradle trên Windows.
-
-
-

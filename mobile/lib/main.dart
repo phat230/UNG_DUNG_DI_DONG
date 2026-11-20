@@ -272,6 +272,141 @@ class Api {
     return jsonDecode(r.body) as Map<String, dynamic>;
   }
 
+  static Future<void> changePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .post(
+          Uri.parse('$baseUrl/auth/change-password'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${prefs.getString('jwt')}',
+          },
+          body: jsonEncode({
+            'currentPassword': currentPassword,
+            'newPassword': newPassword,
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300) {
+      final body = r.body.isEmpty
+          ? <String, dynamic>{}
+          : jsonDecode(r.body) as Map<String, dynamic>;
+      throw Exception(
+        body['message'] ??
+            body['errors']?.toString() ??
+            'Không đổi được mật khẩu.',
+      );
+    }
+  }
+
+  static Future<List<Map<String, dynamic>>> getPlans() async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .get(
+          Uri.parse('$baseUrl/plans'),
+          headers: {'Authorization': 'Bearer ${prefs.getString('jwt')}'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode != 200)
+      throw Exception('Không tải được kế hoạch công việc.');
+    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  static Future<void> createPlan(String name, List<int> taskIds) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .post(
+          Uri.parse('$baseUrl/plans'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${prefs.getString('jwt')}',
+          },
+          body: jsonEncode({'name': name, 'taskIds': taskIds}),
+        )
+        .timeout(const Duration(seconds: 15));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không tạo được kế hoạch: ${r.body}');
+  }
+
+  static Future<void> addPlanItem(int planId, int taskId, int sortOrder) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .post(
+          Uri.parse('$baseUrl/plans/$planId/items'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${prefs.getString('jwt')}',
+          },
+          body: jsonEncode({'taskId': taskId, 'sortOrder': sortOrder}),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không thêm được công việc vào kế hoạch.');
+  }
+
+  static Future<void> updatePlanItem(
+    int planId,
+    int taskId,
+    int sortOrder,
+    DateTime? plannedFor,
+  ) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .put(
+          Uri.parse('$baseUrl/plans/$planId/items/$taskId'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${prefs.getString('jwt')}',
+          },
+          body: jsonEncode({
+            'sortOrder': sortOrder,
+            'plannedFor': plannedFor?.toUtc().toIso8601String(),
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không cập nhật được lịch kế hoạch.');
+  }
+
+  static Future<void> removePlanItem(int planId, int taskId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .delete(
+          Uri.parse('$baseUrl/plans/$planId/items/$taskId'),
+          headers: {'Authorization': 'Bearer ${prefs.getString('jwt')}'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không gỡ được công việc khỏi kế hoạch.');
+  }
+
+  static Future<void> confirmPlan(int planId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .post(
+          Uri.parse('$baseUrl/plans/$planId/confirm'),
+          headers: {'Authorization': 'Bearer ${prefs.getString('jwt')}'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không xác nhận được kế hoạch.');
+  }
+
+  static Future<void> deletePlan(int planId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .delete(
+          Uri.parse('$baseUrl/plans/$planId'),
+          headers: {'Authorization': 'Bearer ${prefs.getString('jwt')}'},
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không xóa được kế hoạch.');
+  }
+
   static Future<void> linkGoogle(String idToken) async {
     final prefs = await SharedPreferences.getInstance();
     final r = await http
@@ -462,26 +597,34 @@ class Api {
         .timeout(const Duration(seconds: 10));
   }
 
-  static Future<List<TaskItem>> getTasks({
+  static Future<TaskPageData> getTaskPage({
     String? ownerId,
     String? q,
     int? workspaceId,
     bool personalOnly = false,
     DateTime? from,
     DateTime? to,
+    int? categoryId,
+    int? status,
+    int page = 1,
+    int pageSize = 20,
+    String sort = 'newest',
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final token = prefs.getString('jwt');
     final uri = Uri.parse('$baseUrl/tasks').replace(
       queryParameters: {
-        'page': '1',
-        'pageSize': '100',
+        'page': '$page',
+        'pageSize': '$pageSize',
+        'sort': sort,
         if (ownerId != null) 'ownerId': ownerId,
         if (q != null && q.isNotEmpty) 'q': q,
         if (workspaceId != null) 'workspaceId': '$workspaceId',
         if (personalOnly) 'personalOnly': 'true',
         if (from != null) 'from': from.toUtc().toIso8601String(),
         if (to != null) 'to': to.toUtc().toIso8601String(),
+        if (categoryId != null) 'categoryId': '$categoryId',
+        if (status != null) 'status': '$status',
       },
     );
     final response = await http
@@ -490,7 +633,7 @@ class Api {
     if (response.statusCode != 200)
       throw Exception('Không tải được công việc từ API.');
     final data = jsonDecode(response.body) as Map<String, dynamic>;
-    return (data['items'] as List).map((raw) {
+    final items = (data['items'] as List).map((raw) {
       final item = raw as Map<String, dynamic>;
       final due = item['dueAt'] as String?;
       return TaskItem(
@@ -507,13 +650,76 @@ class Api {
         assignedToUserId: item['ownerId'] as String?,
         workspaceId: item['workspaceId'] as int?,
         locked: item['isLocked'] as bool? ?? item['status'] == 2,
+        categoryId: item['categoryId'] as int?,
+        createdAt: DateTime.tryParse(item['createdAt'] as String? ?? ''),
+        priority: item['priority'] as int? ?? 1,
+        status: item['status'] as int? ?? 0,
       );
     }).toList();
+    return TaskPageData(items, data['total'] as int, page, pageSize);
+  }
+
+  static Future<List<TaskItem>> getTasks({
+    String? ownerId,
+    String? q,
+    int? workspaceId,
+    bool personalOnly = false,
+    DateTime? from,
+    DateTime? to,
+  }) async => (await getTaskPage(
+    ownerId: ownerId,
+    q: q,
+    workspaceId: workspaceId,
+    personalOnly: personalOnly,
+    from: from,
+    to: to,
+    pageSize: 100,
+  )).items;
+  static Future<void> updateTask({
+    required int id,
+    required String title,
+    required String description,
+    required int? categoryId,
+    required DateTime? dueAt,
+    required int priority,
+    required int status,
+    int? workspaceId,
+    String? assignedToUserId,
+    int? reminderIntervalMinutes,
+    DateTime? reminderUntil,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final response = await http
+        .put(
+          Uri.parse('$baseUrl/tasks/$id'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${prefs.getString('jwt')}',
+          },
+          body: jsonEncode({
+            'title': title,
+            'description': description,
+            'categoryId': categoryId,
+            'dueAt': dueAt?.toUtc().toIso8601String(),
+            'priority': priority,
+            'status': status,
+            'workspaceId': workspaceId,
+            'assignedToUserId': assignedToUserId,
+            'reminderIntervalMinutes': reminderIntervalMinutes,
+            'reminderUntil': reminderUntil?.toUtc().toIso8601String(),
+          }),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode < 200 || response.statusCode >= 300)
+      throw Exception('Không cập nhật được công việc.');
   }
 
   static Future<int> createTask({
     required String title,
     required String description,
+    int? categoryId,
+    int priority = 1,
+    int status = 0,
     DateTime? dueAt,
     int? workspaceId,
     String? assignedToUserId,
@@ -531,8 +737,9 @@ class Api {
           body: jsonEncode({
             'title': title,
             'description': description,
-            'priority': 1,
-            'status': 0,
+            'categoryId': categoryId,
+            'priority': priority,
+            'status': status,
             'workspaceId': workspaceId,
             'assignedToUserId': assignedToUserId,
             'dueAt': dueAt?.toUtc().toIso8601String(),
@@ -544,6 +751,22 @@ class Api {
     if (response.statusCode < 200 || response.statusCode >= 300)
       throw Exception('Không lưu được công việc lên API.');
     return (jsonDecode(response.body) as Map<String, dynamic>)['id'] as int;
+  }
+
+  static Future<void> setTaskStatus(int taskId, int status) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http
+        .patch(
+          Uri.parse('$baseUrl/tasks/$taskId/status'),
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ${prefs.getString('jwt')}',
+          },
+          body: jsonEncode(status),
+        )
+        .timeout(const Duration(seconds: 12));
+    if (r.statusCode < 200 || r.statusCode >= 300)
+      throw Exception('Không cập nhật được trạng thái công việc.');
   }
 
   static Future<void> deleteTask(int taskId) async {
@@ -639,22 +862,32 @@ class Api {
     final db = await TaskStore.db;
     final rows = await db.query(
       'sync_queue',
-      where: 'entity=? AND operation=?',
-      whereArgs: ['task', 'upsert'],
+      where: 'entity=?',
+      whereArgs: ['task'],
       orderBy: 'id',
     );
     final prefs = await SharedPreferences.getInstance();
     for (final row in rows) {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/tasks'),
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': 'Bearer ${prefs.getString('jwt')}',
-            },
-            body: row['payload'] as String,
-          )
-          .timeout(const Duration(seconds: 10));
+      final isUpdate = row['operation'] == 'update';
+      final response =
+          await (isUpdate
+                  ? http.put(
+                      Uri.parse('$baseUrl/tasks/${row['entityId']}'),
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ${prefs.getString('jwt')}',
+                      },
+                      body: row['payload'] as String,
+                    )
+                  : http.post(
+                      Uri.parse('$baseUrl/tasks'),
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer ${prefs.getString('jwt')}',
+                      },
+                      body: row['payload'] as String,
+                    ))
+              .timeout(const Duration(seconds: 10));
       if (response.statusCode < 200 || response.statusCode >= 300) break;
       await db.delete('sync_queue', where: 'id=?', whereArgs: [row['id']]);
     }
@@ -862,6 +1095,108 @@ class Api {
     if (response.statusCode < 200 || response.statusCode >= 300)
       throw Exception('Không cập nhật được công việc trên API.');
   }
+}
+
+Future<void> openChangePasswordDialog(BuildContext context) async {
+  final current = TextEditingController();
+  final next = TextEditingController();
+  final confirm = TextEditingController();
+  var busy = false;
+  String? error;
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setStateDialog) => AlertDialog(
+        title: const Text('Đổi mật khẩu'),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: current,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Mật khẩu hiện tại',
+                ),
+              ),
+              TextField(
+                controller: next,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Mật khẩu mới (8 ký tự, có số)',
+                ),
+              ),
+              TextField(
+                controller: confirm,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Nhập lại mật khẩu mới',
+                ),
+              ),
+              if (error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 10),
+                  child: Text(
+                    error!,
+                    style: const TextStyle(color: Colors.red),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: busy ? null : () => Navigator.pop(dialogContext),
+            child: const Text('Hủy'),
+          ),
+          FilledButton(
+            onPressed: busy
+                ? null
+                : () async {
+                    setStateDialog(() {
+                      busy = true;
+                      error = null;
+                    });
+                    try {
+                      if (next.text.length < 8 ||
+                          !RegExp(r'\d').hasMatch(next.text))
+                        throw Exception(
+                          'Mật khẩu mới cần ít nhất 8 ký tự và có số.',
+                        );
+                      if (next.text != confirm.text)
+                        throw Exception('Hai mật khẩu mới chưa khớp.');
+                      await Api.changePassword(current.text, next.text);
+                      if (dialogContext.mounted) Navigator.pop(dialogContext);
+                      if (context.mounted)
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Đã đổi mật khẩu.')),
+                        );
+                    } catch (e) {
+                      setStateDialog(
+                        () => error = e.toString().replaceFirst(
+                          'Exception: ',
+                          '',
+                        ),
+                      );
+                    } finally {
+                      setStateDialog(() => busy = false);
+                    }
+                  },
+            child: busy
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Cập nhật'),
+          ),
+        ],
+      ),
+    ),
+  );
+  current.dispose();
+  next.dispose();
+  confirm.dispose();
 }
 
 Future<void> openGoogleLinkSettings(BuildContext context) async {
@@ -1400,6 +1735,14 @@ class _LoginPageState extends State<LoginPage> {
       );
 }
 
+class TaskPageData {
+  const TaskPageData(this.items, this.total, this.page, this.pageSize);
+  final List<TaskItem> items;
+  final int total;
+  final int page;
+  final int pageSize;
+}
+
 class TaskItem {
   TaskItem(
     this.id,
@@ -1413,6 +1756,10 @@ class TaskItem {
     this.assignedToUserId,
     this.workspaceId,
     this.locked = false,
+    this.categoryId,
+    this.createdAt,
+    this.priority = 1,
+    this.status = 0,
   });
   final int id;
   final String title;
@@ -1425,16 +1772,20 @@ class TaskItem {
   final String? assignedToUserId;
   final int? workspaceId;
   final bool locked;
+  final int? categoryId;
+  final DateTime? createdAt;
+  final int priority;
+  final int status;
 }
 
 class TaskStore {
   static Database? _db;
   static Future<Database> get db async => _db ??= await openDatabase(
     p.join(await getDatabasesPath(), 'taskflow.db'),
-    version: 2,
+    version: 4,
     onCreate: (d, _) async {
       await d.execute(
-        'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT \'\',dueAt TEXT,priority INTEGER NOT NULL DEFAULT 1,status INTEGER NOT NULL DEFAULT 0,category TEXT NOT NULL DEFAULT \'Cá nhân\',updatedAt TEXT NOT NULL,workspaceId INTEGER,assignedToUserId TEXT,reminderIntervalMinutes INTEGER,reminderUntil TEXT)',
+        'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT \'\',dueAt TEXT,priority INTEGER NOT NULL DEFAULT 1,status INTEGER NOT NULL DEFAULT 0,category TEXT NOT NULL DEFAULT \'Cá nhân\',updatedAt TEXT NOT NULL,workspaceId INTEGER,assignedToUserId TEXT,reminderIntervalMinutes INTEGER,reminderUntil TEXT,categoryId INTEGER)',
       );
       await d.execute(
         'CREATE TABLE sync_queue(id INTEGER PRIMARY KEY AUTOINCREMENT,entity TEXT NOT NULL,entityId INTEGER NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,createdAt TEXT NOT NULL)',
@@ -1480,6 +1831,10 @@ class TaskStore {
         );
         await d.execute('ALTER TABLE tasks ADD COLUMN reminderUntil TEXT');
       }
+      if (oldVersion < 3)
+        await d.execute('ALTER TABLE tasks ADD COLUMN categoryId INTEGER');
+      if (oldVersion < 4)
+        await d.execute('UPDATE tasks SET status=2 WHERE status=1');
     },
   );
   static Future<List<TaskItem>> all() async {
@@ -1492,7 +1847,7 @@ class TaskStore {
           (r) => TaskItem(
             r['id'] as int,
             r['title'] as String,
-            (r['status'] as int) == 1,
+            (r['status'] as int) == 2,
             (r['dueAt'] as String?) ?? 'Chưa đặt hạn',
             description: r['description'] as String? ?? '',
             dueAt: DateTime.tryParse(r['dueAt'] as String? ?? ''),
@@ -1501,6 +1856,11 @@ class TaskStore {
               r['reminderUntil'] as String? ?? '',
             ),
             assignedToUserId: r['assignedToUserId'] as String?,
+            workspaceId: r['workspaceId'] as int?,
+            categoryId: r['categoryId'] as int?,
+            createdAt: DateTime.tryParse(r['updatedAt'] as String? ?? ''),
+            priority: r['priority'] as int? ?? 1,
+            status: r['status'] as int? ?? 0,
           ),
         )
         .toList();
@@ -1510,6 +1870,9 @@ class TaskStore {
     String title, {
     String description = '',
     DateTime? dueAt,
+    int? categoryId,
+    int priority = 1,
+    int status = 0,
     int? workspaceId,
     String? assignedToUserId,
     int? reminderIntervalMinutes,
@@ -1521,6 +1884,9 @@ class TaskStore {
     final id = await d.insert('tasks', {
       'title': title,
       'description': description,
+      'categoryId': categoryId,
+      'priority': priority,
+      'status': status,
       'dueAt': dueAt?.toIso8601String(),
       'workspaceId': workspaceId,
       'assignedToUserId': assignedToUserId,
@@ -1536,6 +1902,9 @@ class TaskStore {
         'payload': jsonEncode({
           'title': title,
           'description': description,
+          'categoryId': categoryId,
+          'priority': priority,
+          'status': status,
           'workspaceId': workspaceId,
           'assignedToUserId': assignedToUserId,
           'dueAt': dueAt?.toUtc().toIso8601String(),
@@ -1547,11 +1916,83 @@ class TaskStore {
     return id;
   }
 
+  static Future<void> cache(List<TaskItem> items) async {
+    final d = await db;
+    await d.transaction((txn) async {
+      for (final task in items) {
+        await txn.insert('tasks', {
+          'id': task.id,
+          'title': task.title,
+          'description': task.description,
+          'categoryId': task.categoryId,
+          'dueAt': task.dueAt?.toIso8601String(),
+          'status': task.done ? 2 : task.status,
+          'priority': task.priority,
+          'workspaceId': task.workspaceId,
+          'assignedToUserId': task.assignedToUserId,
+          'reminderIntervalMinutes': task.reminderIntervalMinutes,
+          'reminderUntil': task.reminderUntil?.toIso8601String(),
+          'updatedAt': DateTime.now().toIso8601String(),
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+    });
+  }
+
+  static Future<void> update(
+    TaskItem task, {
+    required String title,
+    required String description,
+    required int? categoryId,
+    required DateTime? dueAt,
+    required int priority,
+    required int? reminderIntervalMinutes,
+    required DateTime? reminderUntil,
+    required int status,
+  }) async {
+    final d = await db;
+    final now = DateTime.now().toIso8601String();
+    final payload = {
+      'title': title,
+      'description': description,
+      'categoryId': categoryId,
+      'dueAt': dueAt?.toUtc().toIso8601String(),
+      'priority': priority,
+      'status': status,
+      'workspaceId': task.workspaceId,
+      'assignedToUserId': task.assignedToUserId,
+      'reminderIntervalMinutes': reminderIntervalMinutes,
+      'reminderUntil': reminderUntil?.toUtc().toIso8601String(),
+    };
+    await d.update(
+      'tasks',
+      {
+        'title': title,
+        'description': description,
+        'categoryId': categoryId,
+        'dueAt': dueAt?.toIso8601String(),
+        'priority': priority,
+        'status': status,
+        'reminderIntervalMinutes': reminderIntervalMinutes,
+        'reminderUntil': reminderUntil?.toIso8601String(),
+        'updatedAt': now,
+      },
+      where: 'id=?',
+      whereArgs: [task.id],
+    );
+    await d.insert('sync_queue', {
+      'entity': 'task',
+      'entityId': task.id,
+      'operation': 'update',
+      'payload': jsonEncode(payload),
+      'createdAt': now,
+    });
+  }
+
   static Future<void> toggle(TaskItem t) async {
     final d = await db;
     await d.update(
       'tasks',
-      {'status': t.done ? 0 : 1, 'updatedAt': DateTime.now().toIso8601String()},
+      {'status': t.done ? 0 : 2, 'updatedAt': DateTime.now().toIso8601String()},
       where: 'id=?',
       whereArgs: [t.id],
     );
@@ -1568,6 +2009,13 @@ class TaskHome extends StatefulWidget {
 class _TaskHomeState extends State<TaskHome> {
   final taskSearch = TextEditingController();
   List<TaskItem> tasks = [];
+  List<Map<String, dynamic>> categories = [];
+  int? selectedCategoryId;
+  int taskPage = 1;
+  int taskTotal = 0;
+  final int taskPageSize = 20;
+  bool loadingMoreTasks = false;
+  int planItemCount = 0;
   bool loading = true;
   bool? isAdmin;
   String? userId;
@@ -1604,6 +2052,7 @@ class _TaskHomeState extends State<TaskHome> {
       await Api.syncPending();
       final prefs = await SharedPreferences.getInstance();
       userId = prefs.getString('userId');
+      categories = await Api.getCategories();
       groups = await Api.getGroupHistory();
       group = selectedWorkspaceId == null
           ? null
@@ -1612,13 +2061,20 @@ class _TaskHomeState extends State<TaskHome> {
                     .where((g) => g['groupId'] == selectedWorkspaceId)
                     .firstOrNull;
       final today = DateTime.now();
-      data = await Api.getTasks(
+      final pageData = await Api.getTaskPage(
         q: taskSearch.text.trim(),
         workspaceId: selectedWorkspaceId,
         personalOnly: personalOnly,
+        categoryId: selectedCategoryId,
         from: todayOnly ? DateTime(today.year, today.month, today.day) : null,
         to: todayOnly ? DateTime(today.year, today.month, today.day) : null,
+        page: 1,
+        pageSize: taskPageSize,
       );
+      data = pageData.items;
+      taskTotal = pageData.total;
+      taskPage = 1;
+      await TaskStore.cache(data);
       noticeHistory = await Api.getNoticeHistory();
       await _pollNotices();
       for (final task in data) {
@@ -1642,8 +2098,40 @@ class _TaskHomeState extends State<TaskHome> {
       }
     } catch (_) {
       data = await TaskStore.all();
+      taskTotal = data.length;
+      taskPage = 1;
     }
     if (mounted) setState(() => {tasks = data, loading = false});
+  }
+
+  Future<void> _loadMoreTasks() async {
+    if (loadingMoreTasks || tasks.length >= taskTotal) return;
+    setState(() => loadingMoreTasks = true);
+    try {
+      final today = DateTime.now();
+      final pageData = await Api.getTaskPage(
+        q: taskSearch.text.trim(),
+        workspaceId: selectedWorkspaceId,
+        personalOnly: personalOnly,
+        categoryId: selectedCategoryId,
+        from: todayOnly ? DateTime(today.year, today.month, today.day) : null,
+        to: todayOnly ? DateTime(today.year, today.month, today.day) : null,
+        page: taskPage + 1,
+        pageSize: taskPageSize,
+      );
+      setState(() {
+        tasks.addAll(pageData.items);
+        taskPage = pageData.page;
+        taskTotal = pageData.total;
+      });
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => loadingMoreTasks = false);
+    }
   }
 
   @override
@@ -1691,8 +2179,11 @@ class _TaskHomeState extends State<TaskHome> {
     final draft = await Navigator.push<TaskDraft>(
       context,
       MaterialPageRoute(
-        builder: (_) =>
-            TaskEditorPage(group: personalOnly ? null : group, userId: userId),
+        builder: (_) => TaskEditorPage(
+          group: personalOnly ? null : group,
+          userId: userId,
+          categories: categories,
+        ),
       ),
     );
     if (draft == null) return;
@@ -1702,6 +2193,9 @@ class _TaskHomeState extends State<TaskHome> {
       notificationId = await Api.createTask(
         title: draft.title,
         description: draft.description,
+        categoryId: draft.categoryId,
+        priority: draft.priority,
+        status: draft.status,
         dueAt: draft.dueAt,
         workspaceId: draft.workspaceId,
         assignedToUserId: draft.assignedToUserId,
@@ -1718,6 +2212,9 @@ class _TaskHomeState extends State<TaskHome> {
     final localId = await TaskStore.add(
       draft.title,
       description: draft.description,
+      categoryId: draft.categoryId,
+      priority: draft.priority,
+      status: draft.status,
       dueAt: draft.dueAt,
       workspaceId: draft.workspaceId,
       assignedToUserId: draft.assignedToUserId,
@@ -1740,6 +2237,132 @@ class _TaskHomeState extends State<TaskHome> {
       );
     }
     await _load();
+  }
+
+  Future<void> _editTask(TaskItem task) async {
+    Map<String, dynamic>? taskGroup;
+    if (task.workspaceId != null) {
+      taskGroup = task.workspaceId == selectedWorkspaceId
+          ? group
+          : await Api.getGroup(task.workspaceId!);
+      if (taskGroup?['isCurrent'] != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Chỉ sửa được công việc của nhóm đang tham gia.'),
+          ),
+        );
+        return;
+      }
+      final role = taskGroup?['role'];
+      if (task.assignedToUserId != userId && role != 'Leader') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Chỉ người được giao hoặc trưởng nhóm mới sửa được việc này.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+    final draft = await Navigator.push<TaskDraft>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TaskEditorPage(
+          group: taskGroup,
+          userId: userId,
+          categories: categories,
+          initial: task,
+        ),
+      ),
+    );
+    if (draft == null) return;
+    try {
+      await Api.updateTask(
+        id: task.id,
+        title: draft.title,
+        description: draft.description,
+        categoryId: draft.categoryId,
+        dueAt: draft.dueAt,
+        priority: draft.priority,
+        status: draft.status,
+        workspaceId: task.workspaceId,
+        assignedToUserId: task.assignedToUserId,
+        reminderIntervalMinutes: draft.reminderIntervalMinutes,
+        reminderUntil: draft.reminderUntil,
+      );
+    } catch (e) {
+      await TaskStore.update(
+        task,
+        title: draft.title,
+        description: draft.description,
+        categoryId: draft.categoryId,
+        dueAt: draft.dueAt,
+        priority: draft.priority,
+        status: draft.status,
+        reminderIntervalMinutes: draft.reminderIntervalMinutes,
+        reminderUntil: draft.reminderUntil,
+      );
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e Đã lưu thay đổi cục bộ.')));
+    }
+    await _load();
+  }
+
+  Future<void> _showTaskDetails(TaskItem task) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                task.title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                task.description.isEmpty ? 'Chưa có mô tả.' : task.description,
+              ),
+              const SizedBox(height: 8),
+              Text('Danh mục: ${_categoryName(task.categoryId)}'),
+              Text(
+                'Hạn: ${task.dueAt == null ? 'Chưa đặt' : MaterialLocalizations.of(context).formatMediumDate(task.dueAt!)}',
+              ),
+              Text(
+                'Ưu tiên: ${['Thấp', 'Bình thường', 'Cao', 'Khẩn cấp'][task.priority.clamp(0, 3)]}',
+              ),
+              const SizedBox(height: 12),
+              if (_canEditTask(task))
+                FilledButton.icon(
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _editTask(task);
+                  },
+                  icon: const Icon(Icons.edit),
+                  label: const Text('Sửa công việc'),
+                ),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Navigator.pop(sheetContext);
+                  _showTaskAttachments(task);
+                },
+                icon: const Icon(Icons.attach_file),
+                label: const Text('Ảnh và tệp đính kèm'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<void> _joinGroup() async {
@@ -1920,6 +2543,23 @@ class _TaskHomeState extends State<TaskHome> {
     return membership?['isCurrent'] == true &&
         (task.assignedToUserId == userId || membership?['role'] == 'Leader');
   }
+
+  bool _canEditTask(TaskItem task) {
+    if (task.locked) return false;
+    if (task.workspaceId == null) return true;
+    final membership = groups
+        .where((g) => g['groupId'] == task.workspaceId)
+        .firstOrNull;
+    return membership?['isCurrent'] == true &&
+        (task.assignedToUserId == userId || membership?['role'] == 'Leader');
+  }
+
+  String _categoryName(int? id) =>
+      categories
+          .where((item) => item['id'] == id)
+          .map((item) => item['name'] as String)
+          .firstOrNull ??
+      'Chưa phân loại';
 
   Future<void> _deleteTask(TaskItem task) async {
     final ok = await showDialog<bool>(
@@ -2130,12 +2770,14 @@ class _TaskHomeState extends State<TaskHome> {
 
   List<TaskItem> get _visibleTasks {
     final query = taskSearch.text.trim().toLowerCase();
-    if (query.isEmpty) return tasks;
     return tasks
         .where(
           (task) =>
-              task.title.toLowerCase().contains(query) ||
-              task.description.toLowerCase().contains(query),
+              (selectedCategoryId == null ||
+                  task.categoryId == selectedCategoryId) &&
+              (query.isEmpty ||
+                  task.title.toLowerCase().contains(query) ||
+                  task.description.toLowerCase().contains(query)),
         )
         .toList();
   }
@@ -2296,8 +2938,28 @@ class _TaskHomeState extends State<TaskHome> {
       ? const Center(child: Text('Không có nhiệm vụ trong phạm vi đã chọn.'))
       : ListView.builder(
           padding: const EdgeInsets.fromLTRB(12, 4, 12, 100),
-          itemCount: _visibleTasks.length,
+          itemCount: _visibleTasks.length + (tasks.length < taskTotal ? 1 : 0),
           itemBuilder: (ctx, i) {
+            if (i >= _visibleTasks.length) {
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Center(
+                  child: OutlinedButton.icon(
+                    onPressed: loadingMoreTasks ? null : _loadMoreTasks,
+                    icon: loadingMoreTasks
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.expand_more),
+                    label: Text(
+                      loadingMoreTasks ? 'Đang tải…' : 'Tải thêm công việc',
+                    ),
+                  ),
+                ),
+              );
+            }
             final task = _visibleTasks[i];
             return Card(
               child: CheckboxListTile(
@@ -2305,15 +2967,19 @@ class _TaskHomeState extends State<TaskHome> {
                 onChanged: task.done
                     ? null
                     : (_) => _confirmTaskCompletion(task),
-                title: Text(
-                  task.title,
-                  style: TextStyle(
-                    decoration: task.done ? TextDecoration.lineThrough : null,
+                title: InkWell(
+                  onTap: () => _showTaskDetails(task),
+                  child: Text(
+                    task.title,
+                    style: TextStyle(
+                      decoration: task.done ? TextDecoration.lineThrough : null,
+                    ),
                   ),
                 ),
                 subtitle: Text(
                   [
                     task.due,
+                    _categoryName(task.categoryId),
                     if (task.reminderIntervalMinutes != null)
                       'Nhắc mỗi ${task.reminderIntervalMinutes} phút',
                     if (task.assignedToUserId != null)
@@ -2323,6 +2989,12 @@ class _TaskHomeState extends State<TaskHome> {
                 secondary: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    if (_canEditTask(task))
+                      IconButton(
+                        tooltip: 'Sửa công việc',
+                        icon: const Icon(Icons.edit_outlined),
+                        onPressed: () => _editTask(task),
+                      ),
                     IconButton(
                       tooltip: 'Ảnh và tệp đính kèm',
                       icon: const Icon(Icons.attach_file),
@@ -2449,6 +3121,20 @@ class _TaskHomeState extends State<TaskHome> {
                     ),
                     selected: selectedWorkspaceId == item['groupId'],
                     onSelected: (_) => _selectGroup(item),
+                  ),
+                ),
+              for (final item in categories)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(item['name'] as String),
+                    selected: selectedCategoryId == item['id'],
+                    onSelected: (_) {
+                      selectedCategoryId = selectedCategoryId == item['id']
+                          ? null
+                          : item['id'] as int;
+                      _load();
+                    },
                   ),
                 ),
             ],
@@ -2657,6 +3343,11 @@ class _TaskHomeState extends State<TaskHome> {
               icon: const Icon(Icons.refresh),
             ),
           IconButton(
+            tooltip: 'Đổi mật khẩu',
+            onPressed: () => openChangePasswordDialog(context),
+            icon: const Icon(Icons.key),
+          ),
+          IconButton(
             tooltip: 'Tài khoản và liên kết Google',
             onPressed: () => openGoogleLinkSettings(context),
             icon: const Icon(Icons.account_circle_outlined),
@@ -2680,7 +3371,15 @@ class _TaskHomeState extends State<TaskHome> {
           ? _overviewBody()
           : homeTab == 1
           ? _notificationsBody()
-          : _groupsBody(),
+          : homeTab == 2
+          ? _groupsBody()
+          : WorkPlansPage(
+              tasks: tasks,
+              onChanged: _load,
+              onCountChanged: (value) {
+                if (mounted) setState(() => planItemCount = value);
+              },
+            ),
       floatingActionButton: homeTab == 0
           ? FloatingActionButton.extended(
               onPressed: _add,
@@ -2717,6 +3416,15 @@ class _TaskHomeState extends State<TaskHome> {
             icon: Icon(Icons.groups_outlined),
             selectedIcon: Icon(Icons.groups),
             label: 'Nhóm',
+          ),
+          NavigationDestination(
+            icon: Badge(
+              isLabelVisible: planItemCount > 0,
+              label: Text('$planItemCount'),
+              child: const Icon(Icons.event_note_outlined),
+            ),
+            selectedIcon: const Icon(Icons.event_note),
+            label: 'Kế hoạch',
           ),
         ],
       ),
@@ -2795,17 +3503,25 @@ class TaskHistoryPage extends StatelessWidget {
 
 class TaskDraft {
   const TaskDraft({
+    this.existingTaskId,
     required this.title,
     required this.description,
+    required this.categoryId,
     required this.dueAt,
+    required this.priority,
+    required this.status,
     required this.workspaceId,
     required this.assignedToUserId,
     required this.reminderIntervalMinutes,
     required this.reminderUntil,
   });
+  final int? existingTaskId;
   final String title;
   final String description;
+  final int? categoryId;
   final DateTime? dueAt;
+  final int priority;
+  final int status;
   final int? workspaceId;
   final String? assignedToUserId;
   final int? reminderIntervalMinutes;
@@ -2829,6 +3545,12 @@ class _AdminDashboardState extends State<AdminDashboard> {
   List<TaskItem> tasks = [];
   DateTime? createdFrom;
   DateTime? createdTo;
+  DateTime? taskFrom;
+  DateTime? taskTo;
+  int? taskStatusFilter;
+  int taskListPage = 1;
+  int taskListTotal = 0;
+  bool loadingMoreAdminTasks = false;
   bool busy = true;
   String? error;
   @override
@@ -2863,7 +3585,103 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Future<void> _loadTasks() async {
-    tasks = await Api.getTasks(q: taskSearch.text.trim());
+    final data = await Api.getTaskPage(
+      q: taskSearch.text.trim(),
+      status: taskStatusFilter,
+      from: taskFrom,
+      to: taskTo,
+      page: 1,
+      pageSize: 20,
+      sort: 'newest',
+    );
+    tasks = data.items;
+    taskListTotal = data.total;
+    taskListPage = 1;
+  }
+
+  Future<void> _filterTaskDates() async {
+    final now = DateTime.now();
+    final range = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(now.year - 10),
+      lastDate: DateTime(now.year + 5),
+      initialDateRange: taskFrom == null
+          ? null
+          : DateTimeRange(start: taskFrom!, end: taskTo ?? taskFrom!),
+    );
+    if (range == null) return;
+    taskFrom = range.start;
+    taskTo = range.end;
+    await _loadTasks();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadMoreAdminTasks() async {
+    if (loadingMoreAdminTasks || tasks.length >= taskListTotal) return;
+    setState(() => loadingMoreAdminTasks = true);
+    try {
+      final data = await Api.getTaskPage(
+        q: taskSearch.text.trim(),
+        status: taskStatusFilter,
+        from: taskFrom,
+        to: taskTo,
+        page: taskListPage + 1,
+        pageSize: 20,
+        sort: 'newest',
+      );
+      setState(() {
+        tasks.addAll(data.items);
+        taskListPage = data.page;
+        taskListTotal = data.total;
+      });
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    } finally {
+      if (mounted) setState(() => loadingMoreAdminTasks = false);
+    }
+  }
+
+  Future<void> _changeAdminTaskStatus(TaskItem task) async {
+    const statuses = {
+      0: 'Cần làm',
+      1: 'Đang làm',
+      2: 'Hoàn thành',
+      3: 'Đã lưu trữ',
+    };
+    final selected = await showDialog<int>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: Text('Trạng thái: ${task.title}'),
+        children: [
+          for (final entry in statuses.entries)
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(ctx, entry.key),
+              child: Row(
+                children: [
+                  if (entry.key == task.status)
+                    const Icon(Icons.check, size: 18),
+                  const SizedBox(width: 8),
+                  Text(entry.value),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+    if (selected == null) return;
+    try {
+      await Api.setTaskStatus(task.id, selected);
+      await _loadTasks();
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
   }
 
   Future<void> _dateFilter() async {
@@ -3030,6 +3848,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
         title: Text('Quản trị • ${titles[tab]}'),
         actions: [
           IconButton(onPressed: _refresh, icon: const Icon(Icons.refresh)),
+          IconButton(
+            tooltip: 'Đổi mật khẩu',
+            onPressed: () => openChangePasswordDialog(context),
+            icon: const Icon(Icons.key),
+          ),
           IconButton(
             tooltip: 'Liên kết Google',
             onPressed: () => openGoogleLinkSettings(context),
@@ -3269,7 +4092,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Widget _tasksTab() => Column(
     children: [
       Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 6),
         child: TextField(
           controller: taskSearch,
           textInputAction: TextInputAction.search,
@@ -3284,25 +4107,105 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ),
         ),
       ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _filterTaskDates,
+                icon: const Icon(Icons.date_range),
+                label: Text(
+                  taskFrom == null
+                      ? 'Lọc theo hạn'
+                      : '${_dateLabel(taskFrom)} – ${_dateLabel(taskTo)}',
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: 'Xóa lọc hạn',
+              onPressed: taskFrom == null
+                  ? null
+                  : () async {
+                      taskFrom = null;
+                      taskTo = null;
+                      await _loadTasks();
+                      if (mounted) setState(() {});
+                    },
+              icon: const Icon(Icons.filter_alt_off),
+            ),
+          ],
+        ),
+      ),
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: DropdownButtonFormField<int?>(
+          initialValue: taskStatusFilter,
+          decoration: const InputDecoration(
+            labelText: 'Lọc trạng thái',
+            border: OutlineInputBorder(),
+          ),
+          items: const [
+            DropdownMenuItem<int?>(
+              value: null,
+              child: Text('Tất cả trạng thái'),
+            ),
+            DropdownMenuItem<int?>(value: 0, child: Text('Cần làm')),
+            DropdownMenuItem<int?>(value: 1, child: Text('Đang làm')),
+            DropdownMenuItem<int?>(value: 2, child: Text('Hoàn thành')),
+            DropdownMenuItem<int?>(value: 3, child: Text('Đã lưu trữ')),
+          ],
+          onChanged: (value) async {
+            taskStatusFilter = value;
+            await _loadTasks();
+            if (mounted) setState(() {});
+          },
+        ),
+      ),
       Expanded(
         child: tasks.isEmpty
-            ? const Center(child: Text('Chưa có công việc.'))
+            ? const Center(child: Text('Không tìm thấy công việc.'))
             : ListView.builder(
-                itemCount: tasks.length,
+                itemCount:
+                    tasks.length + (tasks.length < taskListTotal ? 1 : 0),
                 itemBuilder: (ctx, i) {
-                  final t = tasks[i];
+                  if (i >= tasks.length)
+                    return Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: OutlinedButton.icon(
+                          onPressed: loadingMoreAdminTasks
+                              ? null
+                              : _loadMoreAdminTasks,
+                          icon: loadingMoreAdminTasks
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(Icons.expand_more),
+                          label: Text(
+                            loadingMoreAdminTasks ? 'Đang tải…' : 'Tải thêm',
+                          ),
+                        ),
+                      ),
+                    );
+                  final task = tasks[i];
                   return ListTile(
                     leading: Icon(
-                      t.done
+                      task.done
                           ? Icons.check_circle
                           : Icons.radio_button_unchecked,
-                      color: t.done ? Colors.green : null,
+                      color: task.done ? Colors.green : null,
                     ),
-                    title: Text(t.title),
+                    title: Text(task.title),
                     subtitle: Text(
-                      '${t.due}${t.reminderIntervalMinutes == null ? '' : ' • Nhắc mỗi ${t.reminderIntervalMinutes} phút'}',
+                      '${task.due} • Trạng thái: ${['Cần làm', 'Đang làm', 'Hoàn thành', 'Đã lưu trữ'][task.status.clamp(0, 3)]}',
                     ),
-                    trailing: const Icon(Icons.chevron_right),
+                    trailing: const Icon(Icons.edit_note),
+                    onTap: () => _changeAdminTaskStatus(task),
                   );
                 },
               ),
@@ -3506,9 +4409,17 @@ class _AdminCreateMemberPageState extends State<AdminCreateMemberPage> {
 }
 
 class TaskEditorPage extends StatefulWidget {
-  const TaskEditorPage({super.key, required this.group, required this.userId});
+  const TaskEditorPage({
+    super.key,
+    required this.group,
+    required this.userId,
+    required this.categories,
+    this.initial,
+  });
   final Map<String, dynamic>? group;
   final String? userId;
+  final List<Map<String, dynamic>> categories;
+  final TaskItem? initial;
   @override
   State<TaskEditorPage> createState() => _TaskEditorPageState();
 }
@@ -3519,14 +4430,24 @@ class _TaskEditorPageState extends State<TaskEditorPage> {
   final description = TextEditingController();
   late DateTime dueAt;
   late DateTime reminderUntil;
-  int? interval = 5;
+  int? interval;
+  int? categoryId;
+  int priority = 1;
+  int status = 0;
   String? assignee;
   bool get isLeader => widget.group?['role'] == 'Leader';
   @override
   void initState() {
     super.initState();
-    dueAt = DateTime.now().add(const Duration(hours: 1));
-    reminderUntil = dueAt.add(const Duration(hours: 2));
+    final task = widget.initial;
+    title.text = task?.title ?? '';
+    description.text = task?.description ?? '';
+    dueAt = task?.dueAt ?? DateTime.now().add(const Duration(hours: 1));
+    reminderUntil = task?.reminderUntil ?? dueAt.add(const Duration(hours: 2));
+    interval = task?.reminderIntervalMinutes ?? 5;
+    categoryId = task?.categoryId;
+    priority = task?.priority ?? 1;
+    status = task?.status ?? 0;
     assignee = widget.userId;
   }
 
@@ -3552,11 +4473,19 @@ class _TaskEditorPageState extends State<TaskEditorPage> {
     Navigator.pop(
       context,
       TaskDraft(
+        existingTaskId: widget.initial?.id,
         title: title.text.trim(),
         description: description.text.trim(),
+        categoryId: categoryId,
         dueAt: dueAt,
-        workspaceId: isLeader ? widget.group!['id'] as int : null,
-        assignedToUserId: isLeader ? assignee : null,
+        priority: priority,
+        status: status,
+        workspaceId:
+            widget.initial?.workspaceId ??
+            (isLeader ? widget.group!['id'] as int : null),
+        assignedToUserId: widget.initial != null && !isLeader
+            ? widget.initial!.assignedToUserId
+            : (isLeader ? assignee : null),
         reminderIntervalMinutes: interval,
         reminderUntil: interval == null ? null : reminderUntil,
       ),
@@ -3569,7 +4498,11 @@ class _TaskEditorPageState extends State<TaskEditorPage> {
         (widget.group?['members'] as List?)?.cast<Map<String, dynamic>>() ??
         const [];
     return Scaffold(
-      appBar: AppBar(title: const Text('Thêm công việc')),
+      appBar: AppBar(
+        title: Text(
+          widget.initial == null ? 'Thêm công việc' : 'Sửa công việc',
+        ),
+      ),
       body: Form(
         key: form,
         child: ListView(
@@ -3594,6 +4527,41 @@ class _TaskEditorPageState extends State<TaskEditorPage> {
                 labelText: 'Mô tả',
                 border: OutlineInputBorder(),
               ),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int?>(
+              initialValue: categoryId,
+              decoration: const InputDecoration(
+                labelText: 'Danh mục',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                const DropdownMenuItem<int?>(
+                  value: null,
+                  child: Text('Chưa phân loại'),
+                ),
+                for (final item in widget.categories)
+                  DropdownMenuItem<int?>(
+                    value: item['id'] as int,
+                    child: Text(item['name'] as String),
+                  ),
+              ],
+              onChanged: (value) => setState(() => categoryId = value),
+            ),
+            const SizedBox(height: 14),
+            DropdownButtonFormField<int>(
+              initialValue: priority,
+              decoration: const InputDecoration(
+                labelText: 'Mức ưu tiên',
+                border: OutlineInputBorder(),
+              ),
+              items: const [
+                DropdownMenuItem(value: 0, child: Text('Thấp')),
+                DropdownMenuItem(value: 1, child: Text('Bình thường')),
+                DropdownMenuItem(value: 2, child: Text('Cao')),
+                DropdownMenuItem(value: 3, child: Text('Khẩn cấp')),
+              ],
+              onChanged: (value) => setState(() => priority = value ?? 1),
             ),
             const SizedBox(height: 14),
             ListTile(
@@ -3681,13 +4649,364 @@ class _TaskEditorPageState extends State<TaskEditorPage> {
             FilledButton.icon(
               onPressed: _save,
               icon: const Icon(Icons.save),
-              label: const Text('Lưu công việc'),
+              label: Text(
+                widget.initial == null ? 'Lưu công việc' : 'Cập nhật công việc',
+              ),
             ),
           ],
         ),
       ),
     );
   }
+}
+
+class WorkPlansPage extends StatefulWidget {
+  const WorkPlansPage({
+    super.key,
+    required this.tasks,
+    required this.onChanged,
+    required this.onCountChanged,
+  });
+  final List<TaskItem> tasks;
+  final Future<void> Function() onChanged;
+  final ValueChanged<int> onCountChanged;
+  @override
+  State<WorkPlansPage> createState() => _WorkPlansPageState();
+}
+
+class _WorkPlansPageState extends State<WorkPlansPage> {
+  List<Map<String, dynamic>> plans = [];
+  bool loading = true;
+
+  Future<void> _load() async {
+    try {
+      final value = await Api.getPlans();
+      if (!mounted) return;
+      setState(() {
+        plans = value;
+        loading = false;
+      });
+      widget.onCountChanged(
+        value
+            .where((p) => p['confirmedAt'] == null)
+            .fold<int>(
+              0,
+              (sum, p) => sum + ((p['items'] as List?)?.length ?? 0),
+            ),
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => loading = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+      }
+    }
+  }
+
+  Future<void> _create() async {
+    final name = TextEditingController();
+    final selected = <int>{};
+    final result = await showDialog<(String, List<int>)>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialog) => AlertDialog(
+          title: const Text('Tạo kế hoạch công việc'),
+          content: SizedBox(
+            width: 440,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: name,
+                  decoration: const InputDecoration(labelText: 'Tên kế hoạch'),
+                ),
+                const SizedBox(height: 8),
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final task in widget.tasks.where((t) => !t.done))
+                        CheckboxListTile(
+                          value: selected.contains(task.id),
+                          title: Text(task.title),
+                          subtitle: Text(task.due),
+                          onChanged: (value) => setDialog(() {
+                            value == true
+                                ? selected.add(task.id)
+                                : selected.remove(task.id);
+                          }),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Hủy'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (name.text.trim().isNotEmpty && selected.isNotEmpty)
+                  Navigator.pop(ctx, (name.text.trim(), selected.toList()));
+              },
+              child: const Text('Tạo kế hoạch'),
+            ),
+          ],
+        ),
+      ),
+    );
+    name.dispose();
+    if (result == null) return;
+    try {
+      await Api.createPlan(result.$1, result.$2);
+      await _load();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _addTask(Map<String, dynamic> plan) async {
+    final included = ((plan['items'] as List?) ?? const [])
+        .map((i) => (i as Map<String, dynamic>)['taskId'] as int)
+        .toSet();
+    final available = widget.tasks
+        .where((t) => !included.contains(t.id) && !t.done)
+        .toList();
+    if (available.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Không còn công việc nào để thêm.')),
+      );
+      return;
+    }
+    final task = await showModalBottomSheet<TaskItem>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => ListView(
+        shrinkWrap: true,
+        children: [
+          for (final item in available)
+            ListTile(
+              title: Text(item.title),
+              subtitle: Text(item.due),
+              onTap: () => Navigator.pop(ctx, item),
+            ),
+        ],
+      ),
+    );
+    if (task == null) return;
+    try {
+      await Api.addPlanItem(
+        plan['id'] as int,
+        task.id,
+        (plan['items'] as List).length,
+      );
+      await _load();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _scheduleItem(
+    Map<String, dynamic> plan,
+    Map<String, dynamic> item,
+    int order,
+  ) async {
+    final initial =
+        DateTime.tryParse(item['plannedFor'] as String? ?? '') ??
+        DateTime.now().add(const Duration(hours: 1));
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 3650)),
+    );
+    if (date == null || !mounted) return;
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null) return;
+    try {
+      await Api.updatePlanItem(
+        plan['id'] as int,
+        item['taskId'] as int,
+        order,
+        DateTime(date.year, date.month, date.day, time.hour, time.minute),
+      );
+      await _load();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _removeItem(
+    Map<String, dynamic> plan,
+    Map<String, dynamic> item,
+  ) async {
+    try {
+      await Api.removePlanItem(plan['id'] as int, item['taskId'] as int);
+      await _load();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    appBar: AppBar(
+      title: const Text('Kế hoạch công việc'),
+      actions: [IconButton(onPressed: _load, icon: const Icon(Icons.refresh))],
+    ),
+    floatingActionButton: FloatingActionButton.extended(
+      onPressed: _create,
+      icon: const Icon(Icons.add),
+      label: const Text('Tạo kế hoạch'),
+    ),
+    body: loading
+        ? const Center(child: CircularProgressIndicator())
+        : plans.isEmpty
+        ? const Center(
+            child: Text(
+              'Chưa có kế hoạch. Chọn các công việc để lập lịch và xác nhận.',
+            ),
+          )
+        : ListView(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 100),
+            children: [
+              for (final plan in plans)
+                Card(
+                  child: ExpansionTile(
+                    leading: Icon(
+                      plan['confirmedAt'] == null
+                          ? Icons.shopping_bag_outlined
+                          : Icons.task_alt,
+                      color: plan['confirmedAt'] == null ? null : Colors.green,
+                    ),
+                    title: Text(plan['name'] as String),
+                    subtitle: Text(
+                      '${(plan['items'] as List).length} công việc • ${plan['confirmedAt'] == null ? 'Bản nháp' : 'Đã xác nhận'}',
+                    ),
+                    children: [
+                      for (var i = 0; i < (plan['items'] as List).length; i++)
+                        Builder(
+                          builder: (ctx) {
+                            final item =
+                                (plan['items'] as List)[i]
+                                    as Map<String, dynamic>;
+                            final planned = DateTime.tryParse(
+                              item['plannedFor'] as String? ?? '',
+                            );
+                            return ListTile(
+                              leading: CircleAvatar(child: Text('${i + 1}')),
+                              title: Text(
+                                item['title'] as String? ?? 'Công việc',
+                              ),
+                              subtitle: Text(
+                                planned == null
+                                    ? 'Chưa xếp giờ'
+                                    : 'Dự kiến: ${MaterialLocalizations.of(context).formatMediumDate(planned)} • ${TimeOfDay.fromDateTime(planned).format(context)}',
+                              ),
+                              trailing: plan['confirmedAt'] == null
+                                  ? Wrap(
+                                      children: [
+                                        IconButton(
+                                          tooltip: 'Xếp lịch',
+                                          onPressed: () =>
+                                              _scheduleItem(plan, item, i),
+                                          icon: const Icon(Icons.event),
+                                        ),
+                                        IconButton(
+                                          tooltip: 'Gỡ khỏi kế hoạch',
+                                          onPressed: () =>
+                                              _removeItem(plan, item),
+                                          icon: const Icon(
+                                            Icons.remove_circle_outline,
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : null,
+                            );
+                          },
+                        ),
+                      if (plan['confirmedAt'] == null)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          child: Wrap(
+                            alignment: WrapAlignment.end,
+                            spacing: 8,
+                            children: [
+                              TextButton.icon(
+                                onPressed: () => _addTask(plan),
+                                icon: const Icon(Icons.add),
+                                label: const Text('Thêm việc'),
+                              ),
+                              TextButton.icon(
+                                onPressed: () async {
+                                  try {
+                                    await Api.deletePlan(plan['id'] as int);
+                                    await _load();
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text('$e')),
+                                      );
+                                  }
+                                },
+                                icon: const Icon(Icons.delete_outline),
+                                label: const Text('Xóa'),
+                              ),
+                              FilledButton.icon(
+                                onPressed: () async {
+                                  try {
+                                    await Api.confirmPlan(plan['id'] as int);
+                                    await _load();
+                                    await widget.onChanged();
+                                  } catch (e) {
+                                    if (mounted)
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        SnackBar(content: Text('$e')),
+                                      );
+                                  }
+                                },
+                                icon: const Icon(Icons.check),
+                                label: const Text('Xác nhận kế hoạch'),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+  );
 }
 
 class CategoryAdminPage extends StatefulWidget {

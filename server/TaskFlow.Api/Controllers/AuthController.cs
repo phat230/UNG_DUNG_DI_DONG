@@ -182,7 +182,7 @@ public class AuthController(UserManager<AppUser> users, SignInManager<AppUser> s
     {
         var user = await users.GetUserAsync(User); if (user is null) return Unauthorized();
         var result = await users.ChangePasswordAsync(user, input.CurrentPassword, input.NewPassword);
-        return result.Succeeded ? NoContent() : BadRequest(result.Errors.Select(e => e.Description));
+        return result.Succeeded ? NoContent() : BadRequest(new { message = string.Join(" ", result.Errors.Select(e => e.Description)) });
     }
 }
 

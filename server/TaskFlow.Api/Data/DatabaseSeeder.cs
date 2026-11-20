@@ -50,6 +50,20 @@ public static class DatabaseSeeder
             END;
             IF NOT EXISTS (SELECT 1 FROM sys.foreign_keys WHERE name='FK_Tasks_Workspaces_WorkspaceId')
                 ALTER TABLE [Tasks] ADD CONSTRAINT [FK_Tasks_Workspaces_WorkspaceId] FOREIGN KEY ([WorkspaceId]) REFERENCES [Workspaces]([Id]) ON DELETE SET NULL;
+            IF OBJECT_ID('TaskPlans', 'U') IS NULL
+            BEGIN
+                CREATE TABLE [TaskPlans] ([Id] int IDENTITY(1,1) NOT NULL CONSTRAINT [PK_TaskPlans] PRIMARY KEY, [OwnerId] nvarchar(450) NOT NULL, [Name] nvarchar(200) NOT NULL, [CreatedAt] datetime2 NOT NULL, [ConfirmedAt] datetime2 NULL,
+                    CONSTRAINT [FK_TaskPlans_AspNetUsers_OwnerId] FOREIGN KEY ([OwnerId]) REFERENCES [AspNetUsers]([Id]) ON DELETE CASCADE);
+                CREATE INDEX [IX_TaskPlans_OwnerId_CreatedAt] ON [TaskPlans]([OwnerId],[CreatedAt]);
+            END;
+            IF OBJECT_ID('TaskPlanItems', 'U') IS NULL
+            BEGIN
+                CREATE TABLE [TaskPlanItems] ([Id] int IDENTITY(1,1) NOT NULL CONSTRAINT [PK_TaskPlanItems] PRIMARY KEY, [PlanId] int NOT NULL, [TaskId] int NOT NULL, [SortOrder] int NOT NULL, [PlannedFor] datetime2 NULL,
+                    CONSTRAINT [FK_TaskPlanItems_TaskPlans_PlanId] FOREIGN KEY ([PlanId]) REFERENCES [TaskPlans]([Id]) ON DELETE CASCADE,
+                    CONSTRAINT [FK_TaskPlanItems_Tasks_TaskId] FOREIGN KEY ([TaskId]) REFERENCES [Tasks]([Id]) ON DELETE NO ACTION);
+                CREATE UNIQUE INDEX [IX_TaskPlanItems_PlanId_TaskId] ON [TaskPlanItems]([PlanId],[TaskId]);
+                CREATE INDEX [IX_TaskPlanItems_TaskId] ON [TaskPlanItems]([TaskId]);
+            END;
             """);
 
         foreach (var role in new[] { "Admin", "Member" })
@@ -113,4 +127,3 @@ public static class DatabaseSeeder
         }
     }
 }
-
