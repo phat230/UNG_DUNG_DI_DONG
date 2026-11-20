@@ -1,0 +1,35 @@
+# .NET
+**/bin/
+**/obj/
+**/TestResults/
+**/artifacts/
+server/**/secrets.json
+server/**/appsettings.*.local.json
+
+# Flutter / Dart
+**/.dart_tool/
+**/.flutter-plugins
+**/.flutter-plugins-dependencies
+**/.packages
+**/build/
+**/coverage/
+**/*.iml
+
+# Local databases and uploads
+**/*.db
+**/*.db-shm
+**/*.db-wal
+server/**/wwwroot/uploads/
+
+# Local IDE / OS
+.vs/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Signing keys and OAuth downloads
+*.jks
+*.keystore
+client_secret_*.json
+google-services.json
