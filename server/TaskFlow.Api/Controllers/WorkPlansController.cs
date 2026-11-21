@@ -28,7 +28,7 @@ public class WorkPlansController(AppDbContext db) : ControllerBase
                            orderby item.SortOrder, item.Id
                            select new { item.Id, item.PlanId, item.TaskId, task.Title, task.Description, task.DueAt, task.Status, task.CategoryId, item.SortOrder, item.PlannedFor })
             .ToListAsync();
-        return Ok(plans.Select(p => new { p.Id, p.Name, p.CreatedAt, p.ConfirmedAt, items = items.Where(i => i.PlanId == p.Id) }));
+        return Ok(plans.Select(p => new { p.Id, p.Name, p.CreatedAt, p.ConfirmedAt, items = items.Where(i => i.PlanId == p.Id).ToList() }));
     }
 
     [HttpPost]

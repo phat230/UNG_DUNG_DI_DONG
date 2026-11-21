@@ -346,7 +346,18 @@ class Api {
         .timeout(const Duration(seconds: 12));
     if (r.statusCode != 200)
       throw Exception('Không tải được kế hoạch công việc.');
-    return (jsonDecode(r.body) as List).cast<Map<String, dynamic>>();
+    final decoded = jsonDecode(r.body);
+    if (decoded is! List) {
+      throw Exception('Dữ liệu kế hoạch từ máy chủ không đúng định dạng.');
+    }
+    return decoded.whereType<Map>().map((rawPlan) {
+      final plan = Map<String, dynamic>.from(rawPlan);
+      final rawItems = plan['items'];
+      plan['items'] = rawItems is List
+          ? rawItems.whereType<Map>().map(Map<String, dynamic>.from).toList()
+          : <Map<String, dynamic>>[];
+      return plan;
+    }).toList();
   }
 
   static Future<void> createPlan(String name, List<int> taskIds) async {
@@ -1115,6 +1126,23 @@ class Api {
       throw Exception('Không cập nhật được trạng thái thành viên.');
   }
 
+  static Future<void> deleteMember(String id) async {
+    final prefs = await SharedPreferences.getInstance();
+    final r = await http.delete(
+      Uri.parse('$baseUrl/admin/members/$id'),
+      headers: {'Authorization': 'Bearer ${prefs.getString('jwt')}'},
+    );
+    if (r.statusCode == 409 || r.statusCode == 400) {
+      try {
+        final body = jsonDecode(r.body);
+        throw Exception(body['message'] ?? 'Không thể xóa tài khoản này.');
+      } on FormatException {
+        throw Exception('Không thể xóa tài khoản này.');
+      }
+    }
+    if (r.statusCode != 204) throw Exception('Không xóa được tài khoản.');
+  }
+
   static Future<void> setTaskDone(TaskItem task) async {
     final prefs = await SharedPreferences.getInstance();
     final response = await http
@@ -1816,12 +1844,60 @@ class TaskItem {
 class TaskStore {
   static Database? _db;
   static final List<TaskItem> _webTasks = [
-    TaskItem(1, '[Nguyễn Đức Phát] Chốt yêu cầu và sơ đồ use case', false, 'Đồ án', description: 'Đồ án', priority: 1, status: 0),
-    TaskItem(2, '[Nguyễn Đức Phát] Thiết kế cơ sở dữ liệu SQL Server', false, 'Đồ án', description: 'Đồ án', priority: 3, status: 0),
-    TaskItem(3, '[Nguyễn Đức Phát] Soạn nội dung báo cáo giữa kỳ', false, 'Học tập', description: 'Học tập', priority: 1, status: 0),
-    TaskItem(4, '[Bùi Đức Anh] Xây dựng API quản lý công việc', false, 'Backend', description: 'Backend', priority: 2, status: 0),
-    TaskItem(5, '[Bùi Đức Anh] Tạo API danh mục công việc', false, 'Backend', description: 'Backend', priority: 1, status: 0),
-    TaskItem(6, '[Bùi Đức Anh] Kiểm tra giao diện trên điện thoại', false, 'Cá nhân', description: 'Cá nhân', priority: 0, status: 0),
+    TaskItem(
+      1,
+      '[Nguyễn Đức Phát] Chốt yêu cầu và sơ đồ use case',
+      false,
+      'Đồ án',
+      description: 'Đồ án',
+      priority: 1,
+      status: 0,
+    ),
+    TaskItem(
+      2,
+      '[Nguyễn Đức Phát] Thiết kế cơ sở dữ liệu SQL Server',
+      false,
+      'Đồ án',
+      description: 'Đồ án',
+      priority: 3,
+      status: 0,
+    ),
+    TaskItem(
+      3,
+      '[Nguyễn Đức Phát] Soạn nội dung báo cáo giữa kỳ',
+      false,
+      'Học tập',
+      description: 'Học tập',
+      priority: 1,
+      status: 0,
+    ),
+    TaskItem(
+      4,
+      '[Bùi Đức Anh] Xây dựng API quản lý công việc',
+      false,
+      'Backend',
+      description: 'Backend',
+      priority: 2,
+      status: 0,
+    ),
+    TaskItem(
+      5,
+      '[Bùi Đức Anh] Tạo API danh mục công việc',
+      false,
+      'Backend',
+      description: 'Backend',
+      priority: 1,
+      status: 0,
+    ),
+    TaskItem(
+      6,
+      '[Bùi Đức Anh] Kiểm tra giao diện trên điện thoại',
+      false,
+      'Cá nhân',
+      description: 'Cá nhân',
+      priority: 0,
+      status: 0,
+    ),
   ];
   static Future<Database> get db async {
     if (kIsWeb) throw UnsupportedError('SQLite is not supported on web.');
@@ -1829,60 +1905,73 @@ class TaskStore {
       p.join(await getDatabasesPath(), 'taskflow.db'),
       version: 4,
       onCreate: (d, _) async {
-      await d.execute(
-        'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT \'\',dueAt TEXT,priority INTEGER NOT NULL DEFAULT 1,status INTEGER NOT NULL DEFAULT 0,category TEXT NOT NULL DEFAULT \'Cá nhân\',updatedAt TEXT NOT NULL,workspaceId INTEGER,assignedToUserId TEXT,reminderIntervalMinutes INTEGER,reminderUntil TEXT,categoryId INTEGER)',
-      );
-      await d.execute(
-        'CREATE TABLE sync_queue(id INTEGER PRIMARY KEY AUTOINCREMENT,entity TEXT NOT NULL,entityId INTEGER NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,createdAt TEXT NOT NULL)',
-      );
-      final now = DateTime.now();
-      final samples = [
-        ('[Nguyễn Đức Phát] Chốt yêu cầu và sơ đồ use case', 'Đồ án', 1, 0, 1),
-        (
-          '[Nguyễn Đức Phát] Thiết kế cơ sở dữ liệu SQL Server',
-          'Đồ án',
-          2,
-          0,
-          3,
-        ),
-        ('[Nguyễn Đức Phát] Soạn nội dung báo cáo giữa kỳ', 'Học tập', 5, 0, 1),
-        ('[Bùi Đức Anh] Xây dựng API quản lý công việc', 'Backend', 3, 0, 2),
-        ('[Bùi Đức Anh] Tạo API danh mục công việc', 'Backend', 4, 0, 1),
-        (
-          '[Bùi Đức Anh] Kiểm tra giao diện trên điện thoại',
-          'Cá nhân',
-          6,
-          0,
-          0,
-        ),
-      ];
-      for (final sample in samples) {
-        await d.insert('tasks', {
-          'title': sample.$1,
-          'category': sample.$2,
-          'dueAt': now.add(Duration(days: sample.$3)).toIso8601String(),
-          'status': sample.$4,
-          'priority': sample.$5,
-          'updatedAt': now.toIso8601String(),
-        });
-      }
-    },
-    onUpgrade: (d, oldVersion, _) async {
-      if (oldVersion < 2) {
-        await d.execute('ALTER TABLE tasks ADD COLUMN workspaceId INTEGER');
-        await d.execute('ALTER TABLE tasks ADD COLUMN assignedToUserId TEXT');
         await d.execute(
-          'ALTER TABLE tasks ADD COLUMN reminderIntervalMinutes INTEGER',
+          'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT \'\',dueAt TEXT,priority INTEGER NOT NULL DEFAULT 1,status INTEGER NOT NULL DEFAULT 0,category TEXT NOT NULL DEFAULT \'Cá nhân\',updatedAt TEXT NOT NULL,workspaceId INTEGER,assignedToUserId TEXT,reminderIntervalMinutes INTEGER,reminderUntil TEXT,categoryId INTEGER)',
         );
-        await d.execute('ALTER TABLE tasks ADD COLUMN reminderUntil TEXT');
-      }
-      if (oldVersion < 3)
-        await d.execute('ALTER TABLE tasks ADD COLUMN categoryId INTEGER');
-      if (oldVersion < 4)
-        await d.execute('UPDATE tasks SET status=2 WHERE status=1');
-    },
-  );
+        await d.execute(
+          'CREATE TABLE sync_queue(id INTEGER PRIMARY KEY AUTOINCREMENT,entity TEXT NOT NULL,entityId INTEGER NOT NULL,operation TEXT NOT NULL,payload TEXT NOT NULL,createdAt TEXT NOT NULL)',
+        );
+        final now = DateTime.now();
+        final samples = [
+          (
+            '[Nguyễn Đức Phát] Chốt yêu cầu và sơ đồ use case',
+            'Đồ án',
+            1,
+            0,
+            1,
+          ),
+          (
+            '[Nguyễn Đức Phát] Thiết kế cơ sở dữ liệu SQL Server',
+            'Đồ án',
+            2,
+            0,
+            3,
+          ),
+          (
+            '[Nguyễn Đức Phát] Soạn nội dung báo cáo giữa kỳ',
+            'Học tập',
+            5,
+            0,
+            1,
+          ),
+          ('[Bùi Đức Anh] Xây dựng API quản lý công việc', 'Backend', 3, 0, 2),
+          ('[Bùi Đức Anh] Tạo API danh mục công việc', 'Backend', 4, 0, 1),
+          (
+            '[Bùi Đức Anh] Kiểm tra giao diện trên điện thoại',
+            'Cá nhân',
+            6,
+            0,
+            0,
+          ),
+        ];
+        for (final sample in samples) {
+          await d.insert('tasks', {
+            'title': sample.$1,
+            'category': sample.$2,
+            'dueAt': now.add(Duration(days: sample.$3)).toIso8601String(),
+            'status': sample.$4,
+            'priority': sample.$5,
+            'updatedAt': now.toIso8601String(),
+          });
+        }
+      },
+      onUpgrade: (d, oldVersion, _) async {
+        if (oldVersion < 2) {
+          await d.execute('ALTER TABLE tasks ADD COLUMN workspaceId INTEGER');
+          await d.execute('ALTER TABLE tasks ADD COLUMN assignedToUserId TEXT');
+          await d.execute(
+            'ALTER TABLE tasks ADD COLUMN reminderIntervalMinutes INTEGER',
+          );
+          await d.execute('ALTER TABLE tasks ADD COLUMN reminderUntil TEXT');
+        }
+        if (oldVersion < 3)
+          await d.execute('ALTER TABLE tasks ADD COLUMN categoryId INTEGER');
+        if (oldVersion < 4)
+          await d.execute('UPDATE tasks SET status=2 WHERE status=1');
+      },
+    );
   }
+
   static Future<List<TaskItem>> all() async {
     if (kIsWeb) return List.from(_webTasks);
     final rows = await (await db).query(
@@ -1928,19 +2017,21 @@ class TaskStore {
   }) async {
     if (kIsWeb) {
       final id = _webTasks.length + 1;
-      _webTasks.add(TaskItem(
-        id,
-        title,
-        status == 2,
-        dueAt?.toIso8601String() ?? 'Chưa đặt hạn',
-        description: description,
-        dueAt: dueAt,
-        priority: priority,
-        status: status,
-        workspaceId: workspaceId,
-        assignedToUserId: assignedToUserId,
-        categoryId: categoryId,
-      ));
+      _webTasks.add(
+        TaskItem(
+          id,
+          title,
+          status == 2,
+          dueAt?.toIso8601String() ?? 'Chưa đặt hạn',
+          description: description,
+          dueAt: dueAt,
+          priority: priority,
+          status: status,
+          workspaceId: workspaceId,
+          assignedToUserId: assignedToUserId,
+          categoryId: categoryId,
+        ),
+      );
       return id;
     }
     final d = await db;
@@ -3439,7 +3530,7 @@ class _TaskHomeState extends State<TaskHome> {
     final pendingTasks = _visibleTasks.where((task) => !task.done).length;
     return Scaffold(
       appBar: AppBar(
-        title: Text(['Tổng quan', 'Thông báo', 'Nhóm'][homeTab]),
+        title: Text(['Tổng quan', 'Thông báo', 'Nhóm', 'Kế hoạch'][homeTab]),
         actions: [
           if (homeTab == 1)
             IconButton(
@@ -3942,6 +4033,71 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
+  Future<void> _deleteMember(Map<String, dynamic> user) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xóa tài khoản?'),
+        content: Text(
+          'Tài khoản ${user['displayName']} và các công việc cá nhân, kế hoạch của tài khoản sẽ bị xóa vĩnh viễn. Hành động này không thể hoàn tác.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xóa tài khoản'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await Api.deleteMember(user['id'] as String);
+      await _refresh();
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
+  Future<void> _deleteAdminTask(TaskItem task) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Xóa công việc?'),
+        content: Text(
+          '“${task.title}” và các tệp đính kèm sẽ bị xóa vĩnh viễn. Nếu công việc đang ở trong kế hoạch, công việc sẽ được gỡ khỏi kế hoạch đó.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Hủy'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Xóa công việc'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      await Api.deleteTask(task.id);
+      await _loadTasks();
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted)
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$e')));
+    }
+  }
+
   String _dateLabel(DateTime? date) => date == null
       ? 'Chọn ngày'
       : MaterialLocalizations.of(context).formatMediumDate(date);
@@ -4113,11 +4269,24 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         '${u['userName']} • ${u['email']}\n$roles • Tạo ${_dateLabel(created)}',
                       ),
                       isThreeLine: true,
-                      trailing: Icon(
-                        u['isActive'] == true
-                            ? Icons.chevron_right
-                            : Icons.block,
-                        color: u['isActive'] == true ? null : Colors.red,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            u['isActive'] == true
+                                ? Icons.chevron_right
+                                : Icons.block,
+                            color: u['isActive'] == true ? null : Colors.red,
+                          ),
+                          IconButton(
+                            tooltip: 'Xóa tài khoản',
+                            onPressed: () => _deleteMember(u),
+                            icon: const Icon(
+                              Icons.delete_outline,
+                              color: Colors.red,
+                            ),
+                          ),
+                        ],
                       ),
                       onTap: () => _openUser(u),
                     ),
@@ -4309,7 +4478,20 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     subtitle: Text(
                       '${task.due} • Trạng thái: ${['Cần làm', 'Đang làm', 'Hoàn thành', 'Đã lưu trữ'][task.status.clamp(0, 3)]}',
                     ),
-                    trailing: const Icon(Icons.edit_note),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.edit_note),
+                        IconButton(
+                          tooltip: 'Xóa công việc',
+                          onPressed: () => _deleteAdminTask(task),
+                          icon: const Icon(
+                            Icons.delete_outline,
+                            color: Colors.red,
+                          ),
+                        ),
+                      ],
+                    ),
                     onTap: () => _changeAdminTaskStatus(task),
                   );
                 },
@@ -4782,6 +4964,13 @@ class WorkPlansPage extends StatefulWidget {
 class _WorkPlansPageState extends State<WorkPlansPage> {
   List<Map<String, dynamic>> plans = [];
   bool loading = true;
+  String? error;
+
+  List<Map<String, dynamic>> _itemsOf(Map<String, dynamic> plan) {
+    final raw = plan['items'];
+    if (raw is! List) return const [];
+    return raw.whereType<Map>().map(Map<String, dynamic>.from).toList();
+  }
 
   Future<void> _load() async {
     try {
@@ -4790,21 +4979,19 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
       setState(() {
         plans = value;
         loading = false;
+        error = null;
       });
       widget.onCountChanged(
         value
             .where((p) => p['confirmedAt'] == null)
-            .fold<int>(
-              0,
-              (sum, p) => sum + ((p['items'] as List?)?.length ?? 0),
-            ),
+            .fold<int>(0, (sum, p) => sum + _itemsOf(p).length),
       );
     } catch (e) {
       if (mounted) {
-        setState(() => loading = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('$e')));
+        setState(() {
+          loading = false;
+          error = '$e';
+        });
       }
     }
   }
@@ -4878,9 +5065,9 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
   }
 
   Future<void> _addTask(Map<String, dynamic> plan) async {
-    final included = ((plan['items'] as List?) ?? const [])
-        .map((i) => (i as Map<String, dynamic>)['taskId'] as int)
-        .toSet();
+    final included = _itemsOf(
+      plan,
+    ).map((i) => int.tryParse('${i['taskId']}')).whereType<int>().toSet();
     final available = widget.tasks
         .where((t) => !included.contains(t.id) && !t.done)
         .toList();
@@ -4908,9 +5095,9 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
     if (task == null) return;
     try {
       await Api.addPlanItem(
-        plan['id'] as int,
+        int.parse('${plan['id']}'),
         task.id,
-        (plan['items'] as List).length,
+        _itemsOf(plan).length,
       );
       await _load();
     } catch (e) {
@@ -4943,8 +5130,8 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
     if (time == null) return;
     try {
       await Api.updatePlanItem(
-        plan['id'] as int,
-        item['taskId'] as int,
+        int.parse('${plan['id']}'),
+        int.parse('${item['taskId']}'),
         order,
         DateTime(date.year, date.month, date.day, time.hour, time.minute),
       );
@@ -4962,7 +5149,10 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
     Map<String, dynamic> item,
   ) async {
     try {
-      await Api.removePlanItem(plan['id'] as int, item['taskId'] as int);
+      await Api.removePlanItem(
+        int.parse('${plan['id']}'),
+        int.parse('${item['taskId']}'),
+      );
       await _load();
     } catch (e) {
       if (mounted)
@@ -4991,6 +5181,29 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
     ),
     body: loading
         ? const Center(child: CircularProgressIndicator())
+        : error != null
+        ? Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.cloud_off_outlined, size: 40),
+                  const SizedBox(height: 12),
+                  Text(
+                    'Không tải được kế hoạch. $error',
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 12),
+                  FilledButton.icon(
+                    onPressed: _load,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Thử lại'),
+                  ),
+                ],
+              ),
+            ),
+          )
         : plans.isEmpty
         ? const Center(
             child: Text(
@@ -5009,7 +5222,7 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
                           : Icons.task_alt,
                       color: plan['confirmedAt'] == null ? null : Colors.green,
                     ),
-                    title: Text(plan['name'] as String),
+                    title: Text(plan['name']?.toString() ?? 'Kế hoạch'),
                     subtitle: Text(
                       '${(plan['items'] as List).length} công việc • ${plan['confirmedAt'] == null ? 'Bản nháp' : 'Đã xác nhận'}',
                     ),
@@ -5071,7 +5284,9 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
                               TextButton.icon(
                                 onPressed: () async {
                                   try {
-                                    await Api.deletePlan(plan['id'] as int);
+                                    await Api.deletePlan(
+                                      int.parse('${plan['id']}'),
+                                    );
                                     await _load();
                                   } catch (e) {
                                     if (mounted)
@@ -5088,7 +5303,9 @@ class _WorkPlansPageState extends State<WorkPlansPage> {
                               FilledButton.icon(
                                 onPressed: () async {
                                   try {
-                                    await Api.confirmPlan(plan['id'] as int);
+                                    await Api.confirmPlan(
+                                      int.parse('${plan['id']}'),
+                                    );
                                     await _load();
                                     await widget.onChanged();
                                   } catch (e) {

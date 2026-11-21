@@ -10,7 +10,7 @@ public record RoleRequest(string Role);
 public record MemberStatusRequest(bool IsActive);
 public record AdminCreateMemberRequest(string UserName, string DisplayName, string Email, string Password, string Role = "Member", int? WorkspaceId = null);
 [ApiController, Route("api/admin/members"), Authorize(Roles = "Admin")]
-public class MembersController(UserManager<AppUser> users, RoleManager<IdentityRole> roles, AppDbContext db) : ControllerBase
+public class MembersController(UserManager<AppUser> users, RoleManager<IdentityRole> roles, AppDbContext db, IWebHostEnvironment environment) : ControllerBase
 {
     [HttpGet] public async Task<IActionResult> List([FromQuery]string? q = null, [FromQuery]DateTime? createdFrom = null, [FromQuery]DateTime? createdTo = null)
     {
@@ -52,4 +52,57 @@ public class MembersController(UserManager<AppUser> users, RoleManager<IdentityR
     }
     [HttpPut("{id}/status")] public async Task<IActionResult> SetStatus(string id, MemberStatusRequest input)
     { var user = await users.FindByIdAsync(id); if (user is null) return NotFound(); user.IsActive = input.IsActive; var result = await users.UpdateAsync(user); return result.Succeeded ? NoContent() : BadRequest(result.Errors); }
+
+    [HttpDelete("{id}")]
+    public async Task<IActionResult> Delete(string id)
+    {
+        var user = await users.FindByIdAsync(id);
+        if (user is null) return NotFound();
+        if (User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value == id)
+            return Conflict(new { message = "Không thể xóa tài khoản đang đăng nhập." });
+
+        var userRoles = await users.GetRolesAsync(user);
+        if (userRoles.Contains("Admin") && await users.GetUsersInRoleAsync("Admin") is { Count: <= 1 })
+            return Conflict(new { message = "Không thể xóa Admin cuối cùng." });
+
+        var ledGroups = await db.Workspaces.Where(w => w.LeaderUserId == id).ToListAsync();
+        foreach (var group in ledGroups)
+        {
+            if (await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == group.Id && m.UserId != id && m.LeftAt == null))
+                return Conflict(new { message = $"Tài khoản đang là trưởng nhóm '{group.Name}'. Hãy chuyển trưởng nhóm hoặc xóa thành viên khỏi nhóm trước." });
+        }
+
+        var taskIds = await db.Tasks.Where(t => t.OwnerId == id)
+            .Select(t => t.Id).ToListAsync();
+        var attachmentFiles = await db.TaskAttachments.Where(a => taskIds.Contains(a.TaskId))
+            .Select(a => new { a.TaskId, a.StorageName }).ToListAsync();
+
+        await using var transaction = await db.Database.BeginTransactionAsync();
+        db.TaskPlans.RemoveRange(db.TaskPlans.Where(p => p.OwnerId == id));
+        db.TaskComments.RemoveRange(db.TaskComments.Where(c => c.UserId == id));
+        db.TaskReminders.RemoveRange(db.TaskReminders.Where(r => r.UserId == id));
+        db.TaskNotices.RemoveRange(db.TaskNotices.Where(n => n.UserId == id));
+        if (taskIds.Count > 0)
+        {
+            db.TaskPlanItems.RemoveRange(db.TaskPlanItems.Where(i => taskIds.Contains(i.TaskId)));
+            db.Tasks.RemoveRange(db.Tasks.Where(t => taskIds.Contains(t.Id)));
+        }
+        db.Categories.RemoveRange(db.Categories.Where(c => c.OwnerId == id));
+        foreach (var group in ledGroups) db.Workspaces.Remove(group);
+        var deleted = await users.DeleteAsync(user);
+        if (!deleted.Succeeded)
+        {
+            await transaction.RollbackAsync();
+            return BadRequest(new { message = string.Join("; ", deleted.Errors.Select(e => e.Description)) });
+        }
+        await db.SaveChangesAsync();
+        await transaction.CommitAsync();
+
+        foreach (var file in attachmentFiles)
+        {
+            var path = Path.Combine(environment.ContentRootPath, "App_Data", "TaskFiles", file.TaskId.ToString(), file.StorageName);
+            if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
+        }
+        return NoContent();
+    }
 }

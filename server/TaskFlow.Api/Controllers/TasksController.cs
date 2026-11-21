@@ -209,7 +209,12 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
         if (!allowed && task.WorkspaceId.HasValue)
             allowed = await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId && m.Role == "Leader" && m.LeftAt == null);
         if (!allowed) return Forbid();
-        if (await db.TaskPlanItems.AnyAsync(i => i.TaskId == id)) return Conflict(new { message = "Công việc đang nằm trong kế hoạch. Hãy gỡ khỏi kế hoạch trước khi xóa." });
+        var planItems = db.TaskPlanItems.Where(i => i.TaskId == id);
+        if (await planItems.AnyAsync())
+        {
+            if (!User.IsInRole("Admin")) return Conflict(new { message = "Công việc đang nằm trong kế hoạch. Hãy gỡ khỏi kế hoạch trước khi xóa." });
+            db.TaskPlanItems.RemoveRange(planItems);
+        }
         var files = await db.TaskAttachments.Where(a => a.TaskId == id).Select(a => a.StorageName).ToListAsync();
         foreach (var file in files) DeleteAttachmentFile(id, file);
         db.Tasks.Remove(task);
