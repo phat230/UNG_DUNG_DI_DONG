@@ -16,14 +16,14 @@
 
 Chức năng đã tích hợp gồm nhắc việc lặp, đăng nhập/liên kết Google, quên mật khẩu, upload tệp đính kèm, quản lý nhóm và phân quyền. Quên mật khẩu gửi token qua SMTP; trong Development khi chưa cấu hình SMTP, API trả token kiểm thử trong phản hồi.
 
-Bảng đối chiếu và các giới hạn/cấu hình cần cho phát hành nằm ở [docs/requirement-mapping.md](docs/requirement-mapping.md). Sơ đồ ERD, use case, quyền và API nằm ở [docs/architecture-and-demo.md](docs/architecture-and-demo.md).
+Tài liệu hỗ trợ vấn đáp: [câu hỏi dự đoán và bài thực hành](docs/ON_TAP_VAN_DAP.md); [giải thích cơ chế, kiến trúc, database và API](docs/GIAI_THICH_CO_CHE_TASKFLOW.md).
 
 ## Cấu trúc
 
 - `mobile/`: Flutter app, đăng nhập/đăng ký API, SQLite `tasks` và `sync_queue`.
 - `server/TaskFlow.Api/`: ASP.NET Core API, Identity/role, SQL Server, CRUD công việc/danh mục/member, tệp đính kèm và kế hoạch.
 - `TaskFlow.sln`: solution .NET.
-- `docs/`: đối chiếu rubric, kiến trúc, ERD, use case, API và kịch bản demo.
+- `docs/`: tài liệu ôn vấn đáp và giải thích cơ chế, kiến trúc, ERD, quyền và API.
 
 ## Chạy ứng dụng Flutter
 
