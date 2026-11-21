@@ -43,6 +43,7 @@ dependencies:
   timezone: ^0.10.1
   file_picker: 13.4.0
   google_sign_in: 7.2.0
+  sqflite_common_ffi: ^2.4.7
 
 dev_dependencies:
   flutter_test:

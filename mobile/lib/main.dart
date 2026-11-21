@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'dart:io' show Platform;
 import 'package:file_picker/file_picker.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'dart:convert';
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite/sqflite.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
@@ -16,8 +18,20 @@ import 'package:timezone/timezone.dart' as tz;
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await GoogleAuth.initialize();
-  await ReminderNotifications.initialize();
+  if (!kIsWeb && (Platform.isWindows || Platform.isLinux)) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
+  try {
+    await GoogleAuth.initialize();
+  } catch (e) {
+    debugPrint('GoogleAuth init error: $e');
+  }
+  try {
+    await ReminderNotifications.initialize();
+  } catch (e) {
+    debugPrint('ReminderNotifications init error: $e');
+  }
   runApp(const TaskFlowApp());
 }
 
@@ -55,19 +69,24 @@ class GoogleAuth {
 class ReminderNotifications {
   static final _plugin = FlutterLocalNotificationsPlugin();
   static Future<void> initialize() async {
-    tzdata.initializeTimeZones();
-    final zone = await FlutterTimezone.getLocalTimezone();
-    tz.setLocalLocation(tz.getLocation(zone.identifier));
-    await _plugin.initialize(
-      const InitializationSettings(
-        android: AndroidInitializationSettings('@mipmap/ic_launcher'),
-      ),
-    );
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.requestNotificationsPermission();
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      tzdata.initializeTimeZones();
+      final zone = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(zone.identifier));
+      await _plugin.initialize(
+        const InitializationSettings(
+          android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+        ),
+      );
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin
+          >()
+          ?.requestNotificationsPermission();
+    } catch (e) {
+      debugPrint('Reminder notification init error: $e');
+    }
   }
 
   static Future<void> schedule({
@@ -77,59 +96,74 @@ class ReminderNotifications {
     required DateTime until,
     required int everyMinutes,
   }) async {
-    await cancel(taskId);
-    final start = firstAt.isAfter(DateTime.now())
-        ? firstAt
-        : DateTime.now().add(Duration(minutes: everyMinutes));
-    final available = await _plugin.pendingNotificationRequests();
-    final count = ((until.difference(start).inMinutes ~/ everyMinutes) + 1)
-        .clamp(0, (450 - available.length).clamp(0, 450));
-    const details = NotificationDetails(
-      android: AndroidNotificationDetails(
-        'task_reminders',
-        'Nhắc công việc',
-        channelDescription: 'Nhắc bạn hoàn thành công việc đúng hạn',
-        importance: Importance.high,
-        priority: Priority.high,
-      ),
-    );
-    for (var i = 0; i < count; i++) {
-      final at = start.add(Duration(minutes: everyMinutes * i));
-      await _plugin.zonedSchedule(
-        taskId * 1000 + i,
-        'Đến hạn công việc',
-        title,
-        tz.TZDateTime.from(at, tz.local),
-        details,
-        androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
-        payload: 'task:$taskId',
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await cancel(taskId);
+      final start = firstAt.isAfter(DateTime.now())
+          ? firstAt
+          : DateTime.now().add(Duration(minutes: everyMinutes));
+      final available = await _plugin.pendingNotificationRequests();
+      final count = ((until.difference(start).inMinutes ~/ everyMinutes) + 1)
+          .clamp(0, (450 - available.length).clamp(0, 450));
+      const details = NotificationDetails(
+        android: AndroidNotificationDetails(
+          'task_reminders',
+          'Nhắc công việc',
+          channelDescription: 'Nhắc bạn hoàn thành công việc đúng hạn',
+          importance: Importance.high,
+          priority: Priority.high,
+        ),
       );
+      for (var i = 0; i < count; i++) {
+        final at = start.add(Duration(minutes: everyMinutes * i));
+        await _plugin.zonedSchedule(
+          taskId * 1000 + i,
+          'Đến hạn công việc',
+          title,
+          tz.TZDateTime.from(at, tz.local),
+          details,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
+          payload: 'task:$taskId',
+        );
+      }
+    } catch (e) {
+      debugPrint('Schedule notification error: $e');
     }
   }
 
   static Future<void> cancel(int taskId) async {
-    final pending = await _plugin.pendingNotificationRequests();
-    for (final item in pending.where((item) => item.id ~/ 1000 == taskId)) {
-      await _plugin.cancel(item.id);
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      final pending = await _plugin.pendingNotificationRequests();
+      for (final item in pending.where((item) => item.id ~/ 1000 == taskId)) {
+        await _plugin.cancel(item.id);
+      }
+    } catch (e) {
+      debugPrint('Cancel notification error: $e');
     }
   }
 
-  static Future<void> showNotice(int id, String title, String body) =>
-      _plugin.show(
+  static Future<void> showNotice(int id, String title, String body) async {
+    if (kIsWeb || !Platform.isAndroid) return;
+    try {
+      await _plugin.show(
         id + 100000,
         title,
         body,
         const NotificationDetails(
           android: AndroidNotificationDetails(
-            'taskflow_rework',
-            'Yêu cầu cập nhật công việc',
-            channelDescription:
-                'Thông báo yêu cầu làm lại công việc từ trưởng nhóm',
+            'task_notices',
+            'Thông báo nhóm',
+            channelDescription: 'Thông báo liên quan đến công việc nhóm',
             importance: Importance.high,
             priority: Priority.high,
           ),
         ),
       );
+    } catch (e) {
+      debugPrint('Show notice error: $e');
+    }
+  }
 }
 
 class TaskFlowApp extends StatefulWidget {
@@ -859,6 +893,7 @@ class Api {
   }
 
   static Future<void> syncPending() async {
+    if (kIsWeb) return;
     final db = await TaskStore.db;
     final rows = await db.query(
       'sync_queue',
@@ -1780,10 +1815,20 @@ class TaskItem {
 
 class TaskStore {
   static Database? _db;
-  static Future<Database> get db async => _db ??= await openDatabase(
-    p.join(await getDatabasesPath(), 'taskflow.db'),
-    version: 4,
-    onCreate: (d, _) async {
+  static final List<TaskItem> _webTasks = [
+    TaskItem(1, '[Nguyễn Đức Phát] Chốt yêu cầu và sơ đồ use case', false, 'Đồ án', description: 'Đồ án', priority: 1, status: 0),
+    TaskItem(2, '[Nguyễn Đức Phát] Thiết kế cơ sở dữ liệu SQL Server', false, 'Đồ án', description: 'Đồ án', priority: 3, status: 0),
+    TaskItem(3, '[Nguyễn Đức Phát] Soạn nội dung báo cáo giữa kỳ', false, 'Học tập', description: 'Học tập', priority: 1, status: 0),
+    TaskItem(4, '[Bùi Đức Anh] Xây dựng API quản lý công việc', false, 'Backend', description: 'Backend', priority: 2, status: 0),
+    TaskItem(5, '[Bùi Đức Anh] Tạo API danh mục công việc', false, 'Backend', description: 'Backend', priority: 1, status: 0),
+    TaskItem(6, '[Bùi Đức Anh] Kiểm tra giao diện trên điện thoại', false, 'Cá nhân', description: 'Cá nhân', priority: 0, status: 0),
+  ];
+  static Future<Database> get db async {
+    if (kIsWeb) throw UnsupportedError('SQLite is not supported on web.');
+    return _db ??= await openDatabase(
+      p.join(await getDatabasesPath(), 'taskflow.db'),
+      version: 4,
+      onCreate: (d, _) async {
       await d.execute(
         'CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT,title TEXT NOT NULL,description TEXT NOT NULL DEFAULT \'\',dueAt TEXT,priority INTEGER NOT NULL DEFAULT 1,status INTEGER NOT NULL DEFAULT 0,category TEXT NOT NULL DEFAULT \'Cá nhân\',updatedAt TEXT NOT NULL,workspaceId INTEGER,assignedToUserId TEXT,reminderIntervalMinutes INTEGER,reminderUntil TEXT,categoryId INTEGER)',
       );
@@ -1837,7 +1882,9 @@ class TaskStore {
         await d.execute('UPDATE tasks SET status=2 WHERE status=1');
     },
   );
+  }
   static Future<List<TaskItem>> all() async {
+    if (kIsWeb) return List.from(_webTasks);
     final rows = await (await db).query(
       'tasks',
       orderBy: 'status ASC,dueAt ASC',
@@ -1879,6 +1926,23 @@ class TaskStore {
     DateTime? reminderUntil,
     bool queue = true,
   }) async {
+    if (kIsWeb) {
+      final id = _webTasks.length + 1;
+      _webTasks.add(TaskItem(
+        id,
+        title,
+        status == 2,
+        dueAt?.toIso8601String() ?? 'Chưa đặt hạn',
+        description: description,
+        dueAt: dueAt,
+        priority: priority,
+        status: status,
+        workspaceId: workspaceId,
+        assignedToUserId: assignedToUserId,
+        categoryId: categoryId,
+      ));
+      return id;
+    }
     final d = await db;
     final now = DateTime.now().toIso8601String();
     final id = await d.insert('tasks', {
@@ -1917,6 +1981,11 @@ class TaskStore {
   }
 
   static Future<void> cache(List<TaskItem> items) async {
+    if (kIsWeb) {
+      _webTasks.clear();
+      _webTasks.addAll(items);
+      return;
+    }
     final d = await db;
     await d.transaction((txn) async {
       for (final task in items) {
@@ -1949,6 +2018,25 @@ class TaskStore {
     required DateTime? reminderUntil,
     required int status,
   }) async {
+    if (kIsWeb) {
+      final idx = _webTasks.indexWhere((t) => t.id == task.id);
+      if (idx != -1) {
+        _webTasks[idx] = TaskItem(
+          task.id,
+          title,
+          status == 2,
+          dueAt?.toIso8601String() ?? 'Chưa đặt hạn',
+          description: description,
+          dueAt: dueAt,
+          priority: priority,
+          status: status,
+          workspaceId: task.workspaceId,
+          assignedToUserId: task.assignedToUserId,
+          categoryId: categoryId,
+        );
+      }
+      return;
+    }
     final d = await db;
     final now = DateTime.now().toIso8601String();
     final payload = {
@@ -1989,6 +2077,23 @@ class TaskStore {
   }
 
   static Future<void> toggle(TaskItem t) async {
+    if (kIsWeb) {
+      final idx = _webTasks.indexWhere((x) => x.id == t.id);
+      if (idx != -1) {
+        final old = _webTasks[idx];
+        _webTasks[idx] = TaskItem(
+          old.id,
+          old.title,
+          !old.done,
+          old.due,
+          description: old.description,
+          dueAt: old.dueAt,
+          priority: old.priority,
+          status: old.done ? 0 : 2,
+        );
+      }
+      return;
+    }
     final d = await db;
     await d.update(
       'tasks',
