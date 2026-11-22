@@ -16,8 +16,17 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
 
     async Task<List<int>> LedGroupIds() => await db.WorkspaceMembers.Where(m => m.UserId == UserId && m.LeftAt == null && m.Role == "Leader").Select(m => m.WorkspaceId).ToListAsync();
     async Task<List<int>> ActiveGroupIds() => await db.WorkspaceMembers.Where(m => m.UserId == UserId && m.LeftAt == null).Select(m => m.WorkspaceId).ToListAsync();
-    async Task<bool> CanManage(TaskItem task) => User.IsInRole("Admin") || (task.OwnerId == UserId && (!task.WorkspaceId.HasValue || await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId && m.LeftAt == null))) || (task.WorkspaceId.HasValue && (await LedGroupIds()).Contains(task.WorkspaceId.Value));
-    async Task<bool> CanView(TaskItem task) => await CanManage(task) || (task.WorkspaceId.HasValue && task.OwnerId == UserId && await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId));
+    async Task<bool> CanManage(TaskItem task) =>
+        User.IsInRole("Admin") ||
+        task.OwnerId == UserId ||
+        task.CreatedByUserId == UserId ||
+        (task.WorkspaceId.HasValue && await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId && m.LeftAt == null));
+
+    async Task<bool> CanView(TaskItem task) =>
+        User.IsInRole("Admin") ||
+        task.OwnerId == UserId ||
+        task.CreatedByUserId == UserId ||
+        (task.WorkspaceId.HasValue && await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == task.WorkspaceId && m.UserId == UserId && m.LeftAt == null));
 
     [HttpGet]
     public async Task<IActionResult> List([FromQuery] int page = 1, [FromQuery] int pageSize = 20, [FromQuery] string? q = null, [FromQuery] WorkStatus? status = null, [FromQuery] int? categoryId = null, [FromQuery] DateTime? from = null, [FromQuery] DateTime? to = null, [FromQuery] string? ownerId = null, [FromQuery] int? workspaceId = null, [FromQuery] bool personalOnly = false, [FromQuery] string? sort = null)
@@ -52,7 +61,7 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
 
     [HttpGet("{id:int}")]
     public async Task<IActionResult> Get(int id)
-    { var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id); return task is null || !await CanManage(task) ? NotFound() : Ok(task); }
+    { var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id); return task is null || !await CanView(task) ? NotFound() : Ok(task); }
 
     [HttpPost]
     public async Task<IActionResult> Create(SaveTaskRequest input)
@@ -217,9 +226,82 @@ public class TasksController(AppDbContext db, IWebHostEnvironment environment) :
         }
         var files = await db.TaskAttachments.Where(a => a.TaskId == id).Select(a => a.StorageName).ToListAsync();
         foreach (var file in files) DeleteAttachmentFile(id, file);
+        DeleteTaskImage(task.ImageStorageName);
         db.Tasks.Remove(task);
         await db.SaveChangesAsync();
         return NoContent();
+    }
+
+    [HttpPost("{id:int}/image"), RequestSizeLimit(10_000_000)]
+    public async Task<IActionResult> UploadImage(int id, [FromForm] IFormFile? file)
+    {
+        var task = await db.Tasks.FirstOrDefaultAsync(t => t.Id == id);
+        if (task is null || !await CanManage(task)) return NotFound();
+        if (file is null || file.Length == 0) return BadRequest(new { message = "Bạn chưa chọn ảnh." });
+        if (file.Length > 10 * 1024 * 1024) return BadRequest(new { message = "Ảnh không được lớn hơn 10 MB." });
+
+        var safeName = Path.GetFileName(file.FileName);
+        var extension = Path.GetExtension(safeName).ToLowerInvariant();
+        var allowed = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg", ".gif", ".webp" };
+        if (!allowed.Contains(extension)) return BadRequest(new { message = "Định dạng file không hợp lệ (chỉ hỗ trợ .png, .jpg, .jpeg, .gif, .webp)." });
+
+        // Sửa sản phẩm: nếu upload ảnh mới thì xóa ảnh cũ trên server
+        DeleteTaskImage(task.ImageStorageName);
+
+        var storageName = $"{Guid.NewGuid():N}{extension}";
+        var directory = Path.Combine(environment.ContentRootPath, "App_Data", "TaskImages");
+        Directory.CreateDirectory(directory);
+        var storagePath = Path.Combine(directory, storageName);
+
+        await using (var output = System.IO.File.Create(storagePath))
+        {
+            await file.CopyToAsync(output);
+        }
+
+        task.ImageStorageName = storageName;
+        task.ImageUrl = $"/api/tasks/{id}/image";
+        task.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return Ok(new { task.Id, task.Title, task.ImageUrl });
+    }
+
+    [HttpDelete("{id:int}/image")]
+    public async Task<IActionResult> DeleteImage(int id)
+    {
+        var task = await db.Tasks.FirstOrDefaultAsync(t => t.Id == id);
+        if (task is null || !await CanManage(task)) return NotFound();
+
+        DeleteTaskImage(task.ImageStorageName);
+        task.ImageStorageName = null;
+        task.ImageUrl = null;
+        task.UpdatedAt = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+
+        return NoContent();
+    }
+
+    [HttpGet("{id:int}/image"), AllowAnonymous]
+    public async Task<IActionResult> GetImage(int id)
+    {
+        var task = await db.Tasks.AsNoTracking().FirstOrDefaultAsync(t => t.Id == id);
+        if (task is null || string.IsNullOrWhiteSpace(task.ImageStorageName))
+            return NotFound();
+
+        var path = Path.Combine(environment.ContentRootPath, "App_Data", "TaskImages", task.ImageStorageName);
+        if (!System.IO.File.Exists(path)) return NotFound();
+
+        var types = new FileExtensionContentTypeProvider();
+        if (!types.TryGetContentType(path, out var contentType)) contentType = "application/octet-stream";
+
+        return PhysicalFile(path, contentType);
+    }
+
+    void DeleteTaskImage(string? storageName)
+    {
+        if (string.IsNullOrWhiteSpace(storageName)) return;
+        var path = Path.Combine(environment.ContentRootPath, "App_Data", "TaskImages", storageName);
+        if (System.IO.File.Exists(path)) System.IO.File.Delete(path);
     }
 
     void DeleteAttachmentFile(int taskId, string storageName)

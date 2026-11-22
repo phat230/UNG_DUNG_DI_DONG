@@ -15,6 +15,10 @@ public static class DatabaseSeeder
         var roles = scope.ServiceProvider.GetRequiredService<RoleManager<IdentityRole>>();
         await db.Database.EnsureCreatedAsync();
         await db.Database.ExecuteSqlRawAsync("""
+            IF COL_LENGTH('Categories', 'ImageUrl') IS NULL ALTER TABLE [Categories] ADD [ImageUrl] nvarchar(500) NULL;
+            IF COL_LENGTH('Categories', 'ImageStorageName') IS NULL ALTER TABLE [Categories] ADD [ImageStorageName] nvarchar(150) NULL;
+            IF COL_LENGTH('Tasks', 'ImageUrl') IS NULL ALTER TABLE [Tasks] ADD [ImageUrl] nvarchar(500) NULL;
+            IF COL_LENGTH('Tasks', 'ImageStorageName') IS NULL ALTER TABLE [Tasks] ADD [ImageStorageName] nvarchar(150) NULL;
             IF COL_LENGTH('AspNetUsers', 'GoogleSubject') IS NULL ALTER TABLE [AspNetUsers] ADD [GoogleSubject] nvarchar(255) NULL;
             IF NOT EXISTS (SELECT 1 FROM sys.indexes WHERE name='IX_AspNetUsers_GoogleSubject' AND object_id=OBJECT_ID('AspNetUsers'))
                 EXEC(N'CREATE UNIQUE INDEX [IX_AspNetUsers_GoogleSubject] ON [AspNetUsers]([GoogleSubject]) WHERE [GoogleSubject] IS NOT NULL');
